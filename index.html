@@ -1,0 +1,571 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Busca de perfis no Bluesky</title>
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 2rem auto; max-width: 60rem; padding: 0 1rem; }
+  form { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-bottom: 1rem; }
+  input { padding: .5rem; }
+  input[type=search] { flex: 1 1 20rem; }
+  select, button { padding: .5rem; }
+  #filtros { display: flex; gap: .75rem; flex-wrap: wrap; align-items: center; }
+  #filtros input { width: 6rem; }
+  #status { margin: 1rem 0; color: #666; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: .5rem; border-bottom: 1px solid #ddd; vertical-align: top; }
+  img { width: 40px; height: 40px; border-radius: 50%; background: #eee; }
+  .snippet { color: #555; font-size: .9em; max-width: 28rem; }
+  time { white-space: nowrap; }
+  small { color: #666; }
+</style>
+
+<h1>Quem postou sobre isso?</h1>
+
+<p id="conta" hidden>
+  Logado como <select id="contaSel"></select> <small id="contaNums"></small>
+  <button type="button" id="addConta">+ conta</button>
+  <button type="button" id="logout">sair</button>
+</p>
+
+<form id="login" hidden>
+  <input id="handle" placeholder="seu.handle.bsky.social" required autocomplete="username">
+  <input id="pass" type="password" placeholder="app password" required autocomplete="current-password">
+  <button>Entrar</button>
+  <small>Use uma <a href="https://bsky.app/settings/app-passwords" target="_blank">app password</a>, não a senha da conta. A senha não é salva.</small>
+</form>
+
+<form id="search" hidden>
+  <select id="modo">
+    <option value="posts">quem postou</option>
+    <option value="seguidores">seguidores de</option>
+    <option value="bio">bio contém</option>
+    <option value="naoSeguem">sigo, mas não me seguem</option>
+  </select>
+  <input type="search" id="q" placeholder="palavra ou frase" list="hist" required>
+  <datalist id="hist"></datalist>
+  <button>Buscar</button>
+  <label>Ordenar por
+    <select id="sort">
+      <option value="last-desc">último post (mais recente)</option>
+      <option value="last-asc">último post (mais antigo)</option>
+      <option value="match-desc">post encontrado (mais recente)</option>
+      <option value="match-asc">post encontrado (mais antigo)</option>
+      <option value="seguido-desc">seguido em (mais recente)</option>
+      <option value="seguido-asc">seguido em (mais antigo)</option>
+    </select>
+  </label>
+</form>
+
+<div id="filtros" hidden>
+  <label>Seguidores de <input type="number" id="segMin" min="0" placeholder="0"></label>
+  <label>até <input type="number" id="segMax" min="0" placeholder="∞"></label>
+  <label>Seguindo de <input type="number" id="sguMin" min="0" placeholder="0"></label>
+  <label>até <input type="number" id="sguMax" min="0" placeholder="∞"></label>
+  <label>Mostrar no máximo <input type="number" id="maxPerfis" min="1" placeholder="∞"></label>
+  <label title="Quanto os seguidores podem se afastar do seguindo. 10% de 500 = entre 450 e 550.">Seguidores dentro de
+    <input type="number" id="difPct" min="0" placeholder="∞">% do seguindo</label>
+  <label>Último post a partir de <input type="date" id="desdeUltimo"></label>
+</div>
+
+<p id="status"></p>
+
+<p><button type="button" id="unfollowTodos" hidden></button></p>
+
+<table hidden id="t">
+  <thead><tr><th></th><th>Perfil</th><th>Seguidores</th><th>Seguindo</th><th>Post encontrado</th><th>Último post</th><th>Seguido em</th><th></th></tr></thead>
+  <tbody></tbody>
+</table>
+
+<script src="config.js"></script>
+<script type="module">
+const HOST = 'https://bsky.social/xrpc/';
+const PAGINAS = { posts: 3, seguidores: 5, follows: 100, bio: 5 };  // páginas de 100 varridas por busca
+const FOLLOW = 'app.bsky.graph.follow';
+const $ = id => document.getElementById(id);
+const fmt = d => d ? new Date(d).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+
+// aceita "@fulano.bsky.social", "fulano.bsky.social", um DID ou a URL do perfil
+const comoAtor = s => (s.trim().match(/(?:profile\/)?([^/@\s]+)\/?$/)?.[1] ?? '').toLowerCase();
+
+// uma palavra só, com @ ou ponto: quase certo que é perfil, não termo de busca
+const pareceHandle = s => !/\s/.test(s.trim()) && /^@|\./.test(s.trim());
+
+// --- sessões: várias contas, guardando só os tokens (nunca a senha) ---
+let contas = JSON.parse(localStorage.getItem('bsky') || '{}'); // handle -> sessão
+if (contas.accessJwt) contas = { [contas.handle]: contas };    // formato antigo, de conta única
+let session = contas[localStorage.getItem('ativa')] ?? Object.values(contas)[0] ?? null;
+
+const saveSession = s => {
+  contas[s.handle] = session = s;
+  localStorage.setItem('bsky', JSON.stringify(contas));
+  localStorage.setItem('ativa', s.handle);
+  return s;
+};
+
+const post = async (path, body, jwt) => {
+  const r = await fetch(HOST + path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...(jwt && { authorization: 'Bearer ' + jwt }) },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error((await r.json()).message || r.status);
+  return r.json();
+};
+
+const login = (identifier, password) => post('com.atproto.server.createSession', { identifier, password }).then(saveSession);
+
+// senha da conta no config.js, se estiver lá
+const senhaNoConfig = h =>
+  [globalThis.BSKY ?? []].flat().find(c => c?.handle && comoAtor(c.handle) === h)?.appPassword;
+
+// renova o token; se o refresh também venceu, refaz o login pelo config.js
+const refresh = async () => {
+  try {
+    return saveSession(await post('com.atproto.server.refreshSession', undefined, session.refreshJwt));
+  } catch (err) {
+    const senha = senhaNoConfig(session.handle);
+    if (!senha) throw err;
+    return login(session.handle, senha);
+  }
+};
+
+// escrita autenticada, com uma tentativa após renovar o token
+const write = (path, body, retry = true) =>
+  post(path, body, session.accessJwt).catch(async err => {
+    if (!retry) throw err;
+    await refresh();
+    return write(path, body, false);
+  });
+
+async function get(path, params, retry = true) {
+  const usp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params))
+    Array.isArray(v) ? v.forEach(x => usp.append(k, x)) : usp.set(k, v);
+  const r = await fetch(HOST + path + '?' + usp,
+    { headers: { authorization: 'Bearer ' + session.accessJwt } });
+  if (r.ok) return r.json();
+
+  // token vencido vem como 400 ExpiredToken, não 401
+  const erro = await r.json().catch(() => ({}));
+  if (retry && (r.status === 401 || erro.error === 'ExpiredToken')) {
+    await refresh();
+    return get(path, params, false);
+  }
+  throw new Error(`${path}: ${r.status}${erro.message ? ' — ' + erro.message : ''}`);
+}
+
+// --- busca: agrupa por autor, guardando o post mais recente que casou ---
+async function searchAuthors(q, onProgress) {
+  const authors = new Map();
+  let cursor;
+  for (let i = 0; i < PAGINAS.posts; i++) {
+    const data = await get('app.bsky.feed.searchPosts', { q, limit: 100, ...(cursor && { cursor }) });
+    for (const p of data.posts) {
+      const prev = authors.get(p.author.did);
+      if (!prev || p.indexedAt > prev.matchedAt)
+        authors.set(p.author.did, { ...p.author, matchedAt: p.indexedAt, text: p.record.text, uri: p.uri });
+    }
+    onProgress(authors.size);
+    cursor = data.cursor;
+    if (!cursor || !data.posts.length) break;
+  }
+  return [...authors.values()];
+}
+
+const semAcento = s => (s ?? '').normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+
+// O searchActors casa a bio, mas é difuso: devolve gente sem o termo em lugar nenhum.
+// Por isso a lista é conferida contra a própria bio antes de virar resultado.
+async function perfisComBio(termo, onProgress) {
+  const out = new Map();
+  const alvo = semAcento(termo);
+  let cursor;
+  for (let i = 0; i < PAGINAS.bio; i++) {
+    const data = await get('app.bsky.actor.searchActors', { q: termo, limit: 100, ...(cursor && { cursor }) });
+    for (const a of data.actors)
+      if (semAcento(a.description).includes(alvo)) out.set(a.did, { ...a });
+    onProgress(out.size);
+    cursor = data.cursor;
+    if (!cursor || !data.actors.length) break;
+  }
+  return [...out.values()];
+}
+
+// ponytail: teto de 500 seguidores; cada perfil vira 1 chamada em fillLastPosts,
+// e o limite da API é 3000 requisições por 5 min. Suba PAGINAS.seguidores se precisar.
+async function seguidoresDe(actor, onProgress) {
+  const out = new Map();
+  let cursor;
+  for (let i = 0; i < PAGINAS.seguidores; i++) {
+    const data = await get('app.bsky.graph.getFollowers', { actor, limit: 100, ...(cursor && { cursor }) });
+    for (const f of data.followers) out.set(f.did, { ...f });
+    onProgress(out.size);
+    cursor = data.cursor;
+    if (!cursor || !data.followers.length) break;
+  }
+  return [...out.values()];
+}
+
+// Meus follows saem do próprio repositório, que é quem guarda a data em que segui.
+// ponytail: teto de 10000 (100 páginas + 400 de getProfiles, folgado no limite de 3000/5min).
+let truncouFollows = false;   // bateu no teto e ainda havia mais para ler
+
+async function meusFollows(onProgress) {
+  const out = new Map();   // por DID: dois records para o mesmo perfil viram uma linha só
+  let cursor;
+  truncouFollows = false;
+  for (let i = 0; i < PAGINAS.follows; i++) {
+    const data = await get('com.atproto.repo.listRecords',
+      { repo: session.did, collection: FOLLOW, limit: 100, ...(cursor && { cursor }) });
+    for (const rec of data.records)
+      out.set(rec.value.subject,
+        { did: rec.value.subject, seguidoEm: rec.value.createdAt, handle: rec.value.subject });
+    onProgress(out.size);
+    cursor = data.cursor;
+    if (!cursor || !data.records.length) break;
+    truncouFollows = i === PAGINAS.follows - 1;   // saiu pelo teto, não pelo fim da lista
+  }
+  return [...out.values()];
+}
+
+// Última atividade. Se o topo do feed é um repost, a data que conta é a do repost —
+// e não a do post original, que é a que o perfil mostra. Por isso vem marcado.
+async function lastActivity(did) {
+  try {
+    const { feed } = await get('app.bsky.feed.getAuthorFeed', { actor: did, limit: 1 });
+    const item = feed[0];
+    if (!item) return {};
+    return item.reason?.indexedAt
+      ? { at: item.reason.indexedAt, repost: true }
+      : { at: item.post.indexedAt };
+  } catch { return {}; }
+}
+
+// Contagens de seguidores/seguindo: getProfiles aceita 25 atores por chamada.
+// O lote pode voltar sem alguns perfis; quem não veio fica com perfilOk falso, porque
+// sem perfil não dá para afirmar nada sobre ele (nem que deixou de te seguir).
+async function fillCounts(rows, onProgress) {
+  const byDid = new Map(rows.map(r => [r.did, r]));
+  const lote = async dids => {
+    const { profiles } = await get('app.bsky.actor.getProfiles', { actors: dids });
+    // handle/nome/avatar também: no modo "sigo, mas não me seguem" a linha começa só com o DID
+    for (const p of profiles) Object.assign(byDid.get(p.did), {
+      handle: p.handle, displayName: p.displayName, avatar: p.avatar,
+      followersCount: p.followersCount, followsCount: p.followsCount, viewer: p.viewer,
+      perfilOk: true,
+    });
+  };
+
+  const dids = [...byDid.keys()];
+  for (let i = 0; i < dids.length; i += 25) {
+    await lote(dids.slice(i, i + 25));
+    onProgress(Math.min(i + 25, dids.length));
+  }
+
+  // segunda tentativa só para os que faltaram
+  const faltando = dids.filter(d => !byDid.get(d).perfilOk);
+  for (let i = 0; i < faltando.length; i += 25) await lote(faltando.slice(i, i + 25));
+}
+
+async function fillLastPosts(rows, onProgress) {
+  let done = 0;
+  const queue = rows.slice();
+  const worker = async () => {
+    for (let r; (r = queue.pop());) {
+      ({ at: r.lastAt, repost: r.lastRepost } = await lastActivity(r.did));
+      onProgress(++done);
+    }
+  };
+  await Promise.all(Array.from({ length: 8 }, worker));
+}
+
+const follow = did => write('com.atproto.repo.createRecord',
+  { repo: session.did, collection: FOLLOW, record: { subject: did, createdAt: new Date().toISOString() } })
+  .then(r => r.uri);
+
+const unfollow = uri => write('com.atproto.repo.deleteRecord',
+  { repo: session.did, collection: FOLLOW, rkey: uri.split('/').pop() });
+
+// --- UI ---
+// nome, bio e avatar vêm de perfis de terceiros e entram em innerHTML: escapar é obrigatório
+const esc = s => String(s ?? '').replace(/[&<>"']/g,
+  c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// texto e classe do botão andam juntos: uma regra só, usada no render e no clique
+const textoBotao = seguindo => seguindo ? 'Seguindo' : 'Seguir';
+const classeBotao = seguindo => seguindo ? 'seguindo' : 'seguir';
+
+let rows = [];
+let visiveis = [];   // o que está na tela agora: é sobre isso que a ação em massa age
+
+// campo vazio = sem limite
+const limite = id => $(id).value === '' ? null : +$(id).value;
+const dentro = (n, min, max) => (min === null || n >= min) && (max === null || n <= max);
+
+// seguidores dentro de X% do seguindo: 10% de 500 aceita de 450 a 550
+const perto = r => {
+  const pct = limite('difPct');
+  if (pct === null) return true;
+  const seguindo = r.followsCount ?? 0;
+  return Math.abs((r.followersCount ?? 0) - seguindo) <= seguindo * pct / 100;
+};
+
+// a data escolhida é local; lastAt é UTC, então converte antes de comparar
+const desdeUltimo = () => {
+  const v = $('desdeUltimo').value;
+  return v ? new Date(v + 'T00:00').toISOString() : null;
+};
+
+const filtrar = () => {
+  const desde = desdeUltimo();
+  return rows.filter(r =>
+    dentro(r.followersCount ?? 0, limite('segMin'), limite('segMax')) &&
+    dentro(r.followsCount ?? 0, limite('sguMin'), limite('sguMax')) &&
+    perto(r) &&
+    (!desde || (r.lastAt ?? '') >= desde));
+};
+
+function render() {
+  const [key, dir] = $('sort').value.split('-');
+  const field = { last: 'lastAt', match: 'matchedAt', seguido: 'seguidoEm' }[key];
+  const sign = dir === 'asc' ? 1 : -1;
+  rows.sort((a, b) => sign * ((a[field] || '') < (b[field] || '') ? -1 : 1));
+
+  const filtrados = filtrar();
+  visiveis = filtrados.slice(0, limite('maxPerfis') ?? Infinity);
+  $('status').textContent = visiveis.length < filtrados.length
+    ? `${visiveis.length} de ${filtrados.length} perfis no filtro (${rows.length} encontrados).`
+    : `${filtrados.length} de ${rows.length} perfis.`;
+
+  const seguidos = visiveis.filter(r => r.viewer?.following).length;
+  $('unfollowTodos').hidden = !seguidos;
+  $('unfollowTodos').textContent = `Deixar de seguir os ${seguidos} listados`;
+
+  $('t').tBodies[0].replaceChildren(...visiveis.map(r => {
+    const tr = document.createElement('tr');
+    // no modo "seguidores" não existe post encontrado
+    const post = r.uri
+      ? `<a href="https://bsky.app/profile/${esc(r.handle)}/post/${esc(r.uri.split('/').pop())}" target="_blank"><time>${fmt(r.matchedAt)}</time></a><br>`
+      : '—';
+    // no modo bio, mostra o trecho que justifica o resultado
+    const bio = $('modo').value === 'bio' && r.description
+      ? `<br><small>${esc(r.description.replace(/\s+/g, ' ').slice(0, 140))}</small>` : '';
+    tr.innerHTML = `
+      <td><img src="${esc(r.avatar ?? '')}" alt="" loading="lazy"></td>
+      <td><a href="https://bsky.app/profile/${esc(r.handle)}" target="_blank">${esc(r.displayName || r.handle)}</a>
+          <br><small>@${esc(r.handle)}</small>${bio}</td>
+      <td class="num">${r.followersCount?.toLocaleString('pt-BR') ?? '—'}</td>
+      <td class="num">${r.followsCount?.toLocaleString('pt-BR') ?? '—'}</td>
+      <td class="snippet">${post}</td>
+      <td><time>${fmt(r.lastAt)}</time>${r.lastRepost ? ' <small>(repost)</small>' : ''}</td>
+      <td><time>${fmt(r.seguidoEm)}</time></td>
+      <td>${r.did === session.did ? ''
+        : `<button data-did="${esc(r.did)}" class="${classeBotao(r.viewer?.following)}">${textoBotao(r.viewer?.following)}</button>`}</td>`;
+    if (r.text) tr.querySelector('.snippet').append(r.text.slice(0, 180)); // texto como texto, não HTML
+    return tr;
+  }));
+  $('t').hidden = false;
+}
+
+$('t').tBodies[0].onclick = async e => {
+  const btn = e.target.closest('button[data-did]');
+  if (!btn) return;
+  const row = rows.find(r => r.did === btn.dataset.did);
+  btn.disabled = true;
+  try {
+    if (row.viewer?.following) {
+      await unfollow(row.viewer.following);
+      row.viewer.following = undefined;
+    } else {
+      (row.viewer ??= {}).following = await follow(row.did);
+    }
+    btn.textContent = textoBotao(row.viewer.following);
+    btn.className = classeBotao(row.viewer.following);
+    contadoresDaConta();
+  } catch (err) {
+    $('status').textContent = 'Erro ao seguir: ' + err.message;
+  }
+  btn.disabled = false;
+};
+
+// --- histórico: 10 últimos termos, via <datalist> ---
+let hist = JSON.parse(localStorage.getItem('hist') || '[]');
+const renderHist = () => $('hist').replaceChildren(
+  ...hist.map(q => Object.assign(document.createElement('option'), { value: q })));
+const addHist = q => {
+  hist = [q, ...hist.filter(x => x !== q)].slice(0, 10);
+  localStorage.setItem('hist', JSON.stringify(hist));
+  renderHist();
+};
+renderHist();
+
+// Age só sobre o que está listado — filtro e limite são a seleção.
+// Sequencial de propósito: escrita em massa é o que estoura o limite da API.
+$('unfollowTodos').onclick = async () => {
+  const alvos = visiveis.filter(r => r.viewer?.following);
+  if (!alvos.length) return;
+  if (!confirm(`Deixar de seguir ${alvos.length} perfis listados?\n\nNão há como desfazer em massa.`)) return;
+
+  $('unfollowTodos').disabled = true;
+  let feitos = 0, erros = 0;
+  for (const r of alvos) {
+    try {
+      await unfollow(r.viewer.following);
+      r.viewer.following = undefined;
+      feitos++;
+    } catch { erros++; }
+    $('status').textContent = `Deixando de seguir: ${feitos + erros}/${alvos.length}`;
+  }
+  $('unfollowTodos').disabled = false;
+  render();
+  $('status').textContent += ` ${feitos} desfeitos${erros ? `, ${erros} falharam` : ''}.`;
+  await contadoresDaConta();   // o "seguindo" da barra acabou de mudar
+};
+
+const showLogin = () => {
+  $('login').hidden = false;
+  $('conta').hidden = Object.keys(contas).length === 0;
+  $('search').hidden = $('filtros').hidden = $('t').hidden = $('unfollowTodos').hidden = true;
+};
+// números da própria conta, para conferir a lista contra o que o perfil diz
+async function contadoresDaConta() {
+  $('contaNums').textContent = '';
+  try {
+    const p = await get('app.bsky.actor.getProfile', { actor: session.did });
+    const n = v => (v ?? 0).toLocaleString('pt-BR');
+    $('contaNums').textContent = `seguindo ${n(p.followsCount)} · seguidores ${n(p.followersCount)}`;
+  } catch { /* números são informativos; falha aqui não atrapalha a busca */ }
+}
+
+const showSearch = () => {
+  $('login').hidden = true;
+  $('conta').hidden = $('search').hidden = $('filtros').hidden = false;
+  $('contaSel').replaceChildren(...Object.keys(contas).map(h =>
+    Object.assign(document.createElement('option'), { value: h, textContent: '@' + h })));
+  $('contaSel').value = session.handle;
+  contadoresDaConta();
+  $('q').focus();
+};
+
+// Trocar de conta invalida o estado de "seguindo" da tabela: recarrega os perfis.
+$('contaSel').onchange = async () => {
+  session = contas[$('contaSel').value];
+  localStorage.setItem('ativa', session.handle);
+  contadoresDaConta();
+  if (!rows.length) return;
+  $('status').textContent = 'Recarregando perfis…';
+  await fillCounts(rows, () => {});
+  render();
+};
+
+$('addConta').onclick = () => { $('handle').value = ''; $('login').hidden = false; $('handle').focus(); };
+
+$('login').onsubmit = async e => {
+  e.preventDefault();
+  $('status').textContent = 'Entrando…';
+  try {
+    await login($('handle').value.trim().replace(/^@/, ''), $('pass').value);
+    $('pass').value = '';
+    $('status').textContent = '';
+    showSearch();
+  } catch (err) { $('status').textContent = 'Erro no login: ' + err.message; }
+};
+
+// sai só da conta ativa; se sobrar outra, assume ela
+$('logout').onclick = () => {
+  delete contas[session.handle];
+  localStorage.setItem('bsky', JSON.stringify(contas));
+  localStorage.removeItem('ativa');
+  rows = visiveis = [];
+  $('t').hidden = $('unfollowTodos').hidden = true;
+  session = Object.values(contas)[0] ?? null;
+  if (session) { localStorage.setItem('ativa', session.handle); showSearch(); }
+  else showLogin();
+};
+$('sort').onchange = $('filtros').oninput = () => rows.length && render();
+
+$('modo').onchange = () => {
+  const modo = $('modo').value;
+  $('q').placeholder = { posts: 'palavra ou frase', seguidores: 'handle do perfil (ex: alguem.bsky.social)',
+                         naoSeguem: 'não precisa preencher', bio: 'termo na bio (ex: fotógrafo)' }[modo];
+  $('q').disabled = modo === 'naoSeguem';   // disabled também dispensa o required
+  // sem último post carregado, esse filtro só esvaziaria a lista
+  $('desdeUltimo').disabled = modo === 'naoSeguem';
+  if ($('desdeUltimo').disabled) $('desdeUltimo').value = '';
+  // cada modo só tem as datas que ele carrega: ordenar pelas outras daria ordem aleatória
+  if (modo === 'naoSeguem') {
+    if (!$('sort').value.startsWith('seguido')) $('sort').value = 'seguido-desc';
+  } else {
+    if ($('sort').value.startsWith('seguido')) $('sort').value = 'last-desc';
+    if (modo !== 'posts' && $('sort').value.startsWith('match')) $('sort').value = 'last-desc';
+  }
+};
+
+$('search').onsubmit = async e => {
+  e.preventDefault();
+  $('t').hidden = $('unfollowTodos').hidden = true;
+  const modo = $('modo').value;
+  const termo = $('q').value.trim();
+  try {
+    $('status').textContent = { posts: 'Buscando posts…', seguidores: 'Buscando seguidores…',
+                                naoSeguem: 'Lendo quem você segue…', bio: 'Procurando nas bios…' }[modo];
+    if (termo) addHist(termo);
+    const achar = n => $('status').textContent = `${n} perfis encontrados…`;
+    rows = modo === 'seguidores' ? await seguidoresDe(comoAtor(termo), achar)
+         : modo === 'naoSeguem' ? await meusFollows(achar)
+         : modo === 'bio' ? await perfisComBio(termo, achar)
+         : await searchAuthors(termo, achar);
+    if (!rows.length) return $('status').textContent = { posts: 'Nenhum post encontrado.',
+      seguidores: 'Esse perfil não tem seguidores.', naoSeguem: 'Você não segue ninguém.',
+      bio: 'Nenhum perfil com esse termo na bio.' }[modo];
+    const lidos = rows.length;   // antes de qualquer filtro, para o status não mentir
+    await fillCounts(rows, n => $('status').textContent = `Carregando perfis: ${n}/${rows.length}`);
+    let semPerfil = 0;
+    if (modo === 'naoSeguem') {
+      rows = rows.filter(r => !r.viewer?.followedBy);   // getProfiles diz quem me segue de volta
+      semPerfil = rows.filter(r => !r.perfilOk).length; // sem perfil, não dá para afirmar nada
+      rows = rows.filter(r => r.perfilOk);
+      if (!rows.length) return $('status').textContent = 'Todos que você segue seguem de volta.';
+    }
+    // no modo naoSeguem o último post não é usado, e ele custa 1 chamada por perfil
+    if (modo !== 'naoSeguem')
+      await fillLastPosts(rows, n => $('status').textContent = `Buscando último post: ${n}/${rows.length}`);
+    render();
+    if (modo === 'naoSeguem')
+      $('status').textContent += ` ${lidos} lidos dos que você segue`
+        + (truncouFollows ? ' (parei no teto, há mais).' : '.');
+    if (semPerfil)
+      $('status').textContent += ` ${semPerfil} perfil(is) ficaram de fora: a API não os retornou.`;
+    if (modo === 'posts' && pareceHandle(termo))
+      $('status').textContent += ' Isso parece um handle — para listar os seguidores dele, troque para "seguidores de".';
+  } catch (err) {
+    $('status').textContent = 'Erro: ' + err.message;
+    if (String(err.message).includes('401')) showLogin();
+  }
+};
+
+// contas do config.js: entra em todas as que ainda não têm sessão salva
+async function autoLogin() {
+  const cfg = [globalThis.BSKY ?? []].flat().filter(c => c?.handle && c?.appPassword);
+  const erros = [];
+  for (const c of cfg) {
+    const handle = comoAtor(c.handle);
+    if (contas[handle]) continue;
+    try { await login(handle, c.appPassword); }
+    catch (err) { erros.push(`@${handle}: ${err.message}`); }
+  }
+  if (erros.length) $('status').textContent = 'Falha no login do config.js — ' + erros.join(' / ');
+  return cfg;
+}
+
+const ativaAntes = session?.handle;          // login de novas contas não pode roubar a conta ativa
+const cfg = await autoLogin();
+session = contas[ativaAntes] ?? Object.values(contas)[0] ?? null;  // sem escolha prévia, a 1ª do config
+if (session) {
+  localStorage.setItem('ativa', session.handle);
+  showSearch();
+} else {
+  $('handle').value = cfg[0]?.handle ?? '';
+  showLogin();
+}
+</script>

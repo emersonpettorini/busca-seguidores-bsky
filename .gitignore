@@ -1,0 +1,8 @@
+# NUNCA versionar nem publicar: contém app passwords em texto puro
+config.js
+
+# gerado pelo test-boot.mjs
+boot.mjs
+
+# fora do repositorio publico, continua na pasta local
+script.txt
