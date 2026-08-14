@@ -13,6 +13,18 @@ const src = readFileSync(join(import.meta.dirname, 'index.html'), 'utf8');
 const mod = src.match(/<script type="module">([\s\S]*?)<\/script>/)[1];
 writeFileSync(join(import.meta.dirname, 'boot.mjs'), mod);
 
+// Estado inicial vindo do próprio HTML, para o falso DOM não divergir do real:
+// valor do <select> (primeira <option>) e quem começa com o atributo hidden.
+const PADRAO = {};
+for (const m of src.matchAll(/<select id="(\w+)"[^>]*>([\s\S]*?)<\/select>/g))
+  PADRAO[m[1]] = m[2].match(/<option value="([^"]+)"/)?.[1] ?? '';
+
+const OCULTOS = new Set();
+for (const [tag] of src.matchAll(/<[a-z]+\s[^>]*>/g)) {
+  const id = tag.match(/id="(\w+)"/)?.[1];
+  if (id && /\shidden[\s>]/.test(tag)) OCULTOS.add(id);
+}
+
 // Elemento falso: guarda o que for atribuído, ignora o que for chamado.
 const fakeEl = (extra = {}) => new Proxy({ value: '', options: [], ...extra }, {
   get: (t, k) => k in t ? t[k]
@@ -36,7 +48,9 @@ async function boot({ storage = {}, BSKY = [], chamadas = [], cenario = {} } = {
   for (const k of Object.keys(els)) delete els[k];
   const corpo = fakeEl({ rows: [] });
   corpo.replaceChildren = (...trs) => { corpo.rows = trs; };   // guarda as linhas para inspeção
-  const el = id => els[id] ??= fakeEl({ id, tBodies: [corpo] });
+  const el = id => els[id] ??= fakeEl({
+    id, value: PADRAO[id] ?? '', hidden: OCULTOS.has(id), disabled: false, tBodies: [corpo],
+  });
   globalThis.document = { getElementById: el, createElement: () => fakeEl() };
   globalThis.localStorage = {
     getItem: k => storage[k] ?? null,
@@ -45,6 +59,9 @@ async function boot({ storage = {}, BSKY = [], chamadas = [], cenario = {} } = {
   };
   globalThis.BSKY = BSKY;
   globalThis.confirm = () => cenario.confirmar !== false;
+  // o app loga o erro tecnico de proposito; aqui ele vira dado, nao ruido na saida
+  const erros = [];
+  globalThis.console = { ...console, error: e => erros.push(e) };
   globalThis.fetch = async (url, opts = {}) => {
     const u = new URL(url);
     const path = u.pathname.split('/').pop();
@@ -249,7 +266,8 @@ const SALVAS = {
 
   e('modo').value = 'seguidores';
   e('modo').onchange();
-  assert.match(e('q').placeholder, /handle/, 'o placeholder muda para handle');
+  assert.match(e('q').placeholder, /@ do perfil/, 'o placeholder pede o perfil, sem jargao');
+  assert.match(e('ajudaModo').textContent, /segue o perfil/i, 'a linha de ajuda explica o modo');
 
   e('q').value = '@alvo.bsky.social';   // o @ deve ser aceito
   await e('search').onsubmit({ preventDefault() {} });
@@ -266,11 +284,15 @@ const SALVAS = {
   e('modo').onchange();
   assert.equal(e('sort').value, 'last-desc', 'volta para ordenacao por ultimo post');
 
-  // handle inexistente não pode derrubar a tela, e o motivo tem que aparecer
+  // handle inexistente não pode derrubar a tela: mensagem em português na tela,
+  // e o detalhe da API preservado no title para quem for depurar
   e('q').value = 'nao-existe.bsky.social';
   await e('search').onsubmit({ preventDefault() {} });
-  assert.match(e('status').textContent, /Erro.*Actor not found: nao-existe\.bsky\.social/,
-    'o erro precisa dizer o motivo da API, nao so o codigo 400');
+  assert.equal(e('status').textContent, 'Perfil não encontrado. Confira o @ digitado.',
+    'a tela nao pode falar em codigo HTTP nem em nome de endpoint');
+  assert.match(e('status').title, /Actor not found: nao-existe\.bsky\.social/,
+    'o motivo tecnico continua acessivel');
+  assert.equal(e('btnBuscar').disabled, false, 'o botao volta a funcionar depois do erro');
   console.log('ok 6 - modo seguidores pagina, filtra e trata handle invalido');
 }
 
@@ -331,8 +353,9 @@ const SALVAS = {
   assert.equal(comConfig('status').textContent, '3 de 3 perfis.', 'com a senha no config, refaz o login sozinho');
 
   const semConfig = await buscar(await boot(base()));
-  assert.match(semConfig('status').textContent, /Erro.*Token has expired/,
-    'sem config, o motivo tem que aparecer');
+  assert.equal(semConfig('status').textContent, 'Sua sessão expirou. Entre novamente.',
+    'sem config, a tela explica o que fazer');
+  assert.match(semConfig('status').title, /Token has expired/, 'e o motivo tecnico fica no title');
   console.log('ok 9 - refresh vencido reloga pelo config, ou explica o erro');
 }
 
@@ -667,6 +690,52 @@ const SALVAS = {
     assert.ok(html.includes('&lt;img src=x'), 'o texto perigoso aparece escapado');
     console.log('ok 22 - busca na bio confere o termo e escapa conteudo de terceiros');
   } finally { PERFIS.length = 3; }
+}
+
+// 23) a interface se explica sozinha e não engana
+{
+  const r = await boot({ storage: { bsky: JSON.stringify(SALVAS), ativa: 'um.bsky.social' } });
+  const e = r.el;
+
+  // ao entrar, o modo padrão já vem explicado — sem precisar clicar em nada
+  assert.equal(e('modo').value, 'posts', 'comeca no modo mais comum');
+  assert.equal(e('ajudaModo').hidden, false, 'a ajuda aparece de cara');
+  assert.match(e('ajudaModo').textContent, /Procura o termo nos posts/, 'e diz o que a busca faz');
+  assert.equal(e('filtrosAtivos').textContent, '(nenhum)', 'o resumo dos filtros comeca zerado');
+
+  // o contador de filtros conta o que está preenchido e valendo
+  for (const k of ['segMin', 'segMax', 'sguMin', 'sguMax', 'maxPerfis', 'difPct', 'desdeUltimo']) e(k).value = '';
+  e('segMin').value = 100; e('difPct').value = 10; e('filtros').oninput();
+  assert.equal(e('filtrosAtivos').textContent, '(2 ativos)', 'dois filtros preenchidos, dois contados');
+
+  // trocar para um modo que não usa a data limpa o campo — e o resumo acompanha,
+  // senão diria "3 ativos" com um filtro que não está mais valendo
+  e('desdeUltimo').value = '2026-07-01'; e('filtros').oninput();
+  assert.equal(e('filtrosAtivos').textContent, '(3 ativos)', 'tres enquanto o campo vale');
+  e('modo').value = 'naoSeguem'; e('modo').onchange();
+  assert.equal(e('desdeUltimo').value, '', 'a data e limpa no modo que nao a usa');
+  assert.equal(e('filtrosAtivos').textContent, '(2 ativos)', 'e sai da conta junto');
+
+  // as ordens sem sentido para o modo somem, em vez de trocar a escolha por baixo
+  const escondidas = () => e('sort').options.filter(o => o.hidden).map(o => o.value);
+  e('sort').options = [
+    { value: 'last-desc', hidden: false }, { value: 'match-desc', hidden: false },
+    { value: 'seguido-desc', hidden: false },
+  ];
+  e('modo').onchange();
+  assert.deepEqual(escondidas(), ['last-desc', 'match-desc'], 'em naoSeguem so sobra "seguido em"');
+  e('modo').value = 'posts'; e('modo').onchange();
+  assert.deepEqual(escondidas(), ['seguido-desc'], 'em posts some o "seguido em"');
+
+  // durante a busca o botão trava: dois cliques dariam duas buscas concorrentes
+  e('q').value = 'teste';
+  const emAndamento = e('search').onsubmit({ preventDefault() {} });
+  assert.equal(e('btnBuscar').disabled, true, 'travado enquanto busca');
+  assert.equal(e('btnBuscar').textContent, 'Buscando…', 'e diz que esta trabalhando');
+  await emAndamento;
+  assert.equal(e('btnBuscar').disabled, false, 'liberado ao terminar');
+  assert.equal(e('btnBuscar').textContent, 'Buscar', 'com o texto de volta');
+  console.log('ok 23 - ajuda por modo, resumo de filtros, ordens validas e botao travado');
 }
 
 rmSync(join(import.meta.dirname, 'boot.mjs'));

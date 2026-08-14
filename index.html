@@ -2,48 +2,76 @@
 <meta charset="utf-8">
 <title>Busca de perfis no Bluesky</title>
 <style>
+  /* precisa vir antes: display de autor vence o do navegador e faria [hidden] aparecer */
+  [hidden] { display: none !important; }
   body { font: 15px/1.4 system-ui, sans-serif; margin: 2rem auto; max-width: 60rem; padding: 0 1rem; }
-  form { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-bottom: 1rem; }
-  input { padding: .5rem; }
-  input[type=search] { flex: 1 1 20rem; }
-  select, button { padding: .5rem; }
-  #filtros { display: flex; gap: .75rem; flex-wrap: wrap; align-items: center; }
+  h1 { margin: 0 0 .25rem; font-size: 1.6rem; }
+  #intro { color: #444; margin: 0 0 1.5rem; max-width: 46rem; }
+  form { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin-bottom: .5rem; }
+  input, select, button { padding: .5rem; font: inherit; }
+  input[type=search] { flex: 1 1 18rem; }
+  #modo { font-weight: 600; }
+  #ajudaModo { color: #555; margin: 0 0 1rem; }
+  #filtrosBox { margin-bottom: 1rem; }
+  #filtrosBox summary { cursor: pointer; user-select: none; }
+  #filtros { display: flex; gap: .75rem; flex-wrap: wrap; align-items: center; padding: .75rem 0 0; }
   #filtros input { width: 6rem; }
+  #filtros input[type=date] { width: auto; }
   #status { margin: 1rem 0; color: #666; }
-  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  #unfollowTodos { color: #a11; background: #fff; border: 1px solid #a11; }
+  .aviso { flex: 1 1 100%; background: #fffbe6; border: 1px solid #e8d98a;
+           border-radius: 6px; padding: .75rem 1rem; margin: 0 0 .5rem; max-width: 46rem; }
+  .rolagem { overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; }
   th, td { text-align: left; padding: .5rem; border-bottom: 1px solid #ddd; vertical-align: top; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
   img { width: 40px; height: 40px; border-radius: 50%; background: #eee; }
   .snippet { color: #555; font-size: .9em; max-width: 28rem; }
   time { white-space: nowrap; }
   small { color: #666; }
+  /* cada modo mostra só as colunas que ele preenche */
+  #t:not([data-modo=posts]) .col-post,
+  #t:not([data-modo=naoSeguem]) .col-seguido,
+  #t[data-modo=naoSeguem] .col-ultimo { display: none; }
 </style>
 
-<h1>Quem postou sobre isso?</h1>
+<h1>Busca de perfis no Bluesky</h1>
+<p id="intro">
+  Encontre perfis por um termo que eles postaram ou que está na bio, veja os seguidores de
+  alguém, ou descubra quem você segue e não te segue de volta. Dá para filtrar por número de
+  seguidores e por atividade recente, e seguir ou deixar de seguir direto da lista.
+</p>
 
 <p id="conta" hidden>
-  Logado como <select id="contaSel"></select> <small id="contaNums"></small>
+  Conectado como <select id="contaSel"></select> <small id="contaNums"></small>
   <button type="button" id="addConta">+ conta</button>
   <button type="button" id="logout">sair</button>
 </p>
 
 <form id="login" hidden>
-  <input id="handle" placeholder="seu.handle.bsky.social" required autocomplete="username">
+  <p class="aviso">
+    Entre com uma <a href="https://bsky.app/settings/app-passwords" target="_blank">app password</a>,
+    <strong>nunca a senha da sua conta</strong>. Você cria uma em Configurações → App Passwords no
+    Bluesky, e pode revogá-la quando quiser — ela não dá acesso a e-mail, senha nem à exclusão do perfil.
+    Esta página não tem servidor: sua senha vai direto para o Bluesky e só os tokens da sessão ficam
+    guardados neste navegador.
+  </p>
+  <input id="handle" placeholder="seu @ no Bluesky (ex: fulano.bsky.social)" required autocomplete="username">
   <input id="pass" type="password" placeholder="app password" required autocomplete="current-password">
   <button>Entrar</button>
-  <small>Use uma <a href="https://bsky.app/settings/app-passwords" target="_blank">app password</a>, não a senha da conta. A senha não é salva.</small>
 </form>
 
 <form id="search" hidden>
+  <label for="modo">Buscar por</label>
   <select id="modo">
-    <option value="posts">quem postou</option>
-    <option value="seguidores">seguidores de</option>
-    <option value="bio">bio contém</option>
-    <option value="naoSeguem">sigo, mas não me seguem</option>
+    <option value="posts">quem postou um termo</option>
+    <option value="seguidores">seguidores de um perfil</option>
+    <option value="bio">perfis com termo na bio</option>
+    <option value="naoSeguem">quem eu sigo e não me segue</option>
   </select>
   <input type="search" id="q" placeholder="palavra ou frase" list="hist" required>
   <datalist id="hist"></datalist>
-  <button>Buscar</button>
+  <button id="btnBuscar">Buscar</button>
   <label>Ordenar por
     <select id="sort">
       <option value="last-desc">último post (mais recente)</option>
@@ -56,7 +84,11 @@
   </label>
 </form>
 
-<div id="filtros" hidden>
+<p id="ajudaModo" hidden></p>
+
+<details id="filtrosBox" hidden>
+  <summary>Filtros <span id="filtrosAtivos"></span></summary>
+<div id="filtros">
   <label>Seguidores de <input type="number" id="segMin" min="0" placeholder="0"></label>
   <label>até <input type="number" id="segMax" min="0" placeholder="∞"></label>
   <label>Seguindo de <input type="number" id="sguMin" min="0" placeholder="0"></label>
@@ -66,15 +98,24 @@
     <input type="number" id="difPct" min="0" placeholder="∞">% do seguindo</label>
   <label>Último post a partir de <input type="date" id="desdeUltimo"></label>
 </div>
+</details>
 
 <p id="status"></p>
 
 <p><button type="button" id="unfollowTodos" hidden></button></p>
 
-<table hidden id="t">
-  <thead><tr><th></th><th>Perfil</th><th>Seguidores</th><th>Seguindo</th><th>Post encontrado</th><th>Último post</th><th>Seguido em</th><th></th></tr></thead>
-  <tbody></tbody>
-</table>
+<div class="rolagem">
+  <table hidden id="t">
+    <thead><tr>
+      <th></th><th>Perfil</th><th>Seguidores</th><th>Seguindo</th>
+      <th class="col-post">Post encontrado</th>
+      <th class="col-ultimo">Último post</th>
+      <th class="col-seguido">Seguido em</th>
+      <th></th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+</div>
 
 <script src="config.js"></script>
 <script type="module">
@@ -337,6 +378,9 @@ function render() {
     ? `${visiveis.length} de ${filtrados.length} perfis no filtro (${rows.length} encontrados).`
     : `${filtrados.length} de ${rows.length} perfis.`;
 
+  $('t').setAttribute('data-modo', $('modo').value);   // o CSS esconde as colunas vazias do modo
+  resumirFiltros();
+
   const seguidos = visiveis.filter(r => r.viewer?.following).length;
   $('unfollowTodos').hidden = !seguidos;
   $('unfollowTodos').textContent = `Deixar de seguir os ${seguidos} listados`;
@@ -356,9 +400,9 @@ function render() {
           <br><small>@${esc(r.handle)}</small>${bio}</td>
       <td class="num">${r.followersCount?.toLocaleString('pt-BR') ?? '—'}</td>
       <td class="num">${r.followsCount?.toLocaleString('pt-BR') ?? '—'}</td>
-      <td class="snippet">${post}</td>
-      <td><time>${fmt(r.lastAt)}</time>${r.lastRepost ? ' <small>(repost)</small>' : ''}</td>
-      <td><time>${fmt(r.seguidoEm)}</time></td>
+      <td class="snippet col-post">${post}</td>
+      <td class="col-ultimo"><time>${fmt(r.lastAt)}</time>${r.lastRepost ? ' <small>(repost)</small>' : ''}</td>
+      <td class="col-seguido"><time>${fmt(r.seguidoEm)}</time></td>
       <td>${r.did === session.did ? ''
         : `<button data-did="${esc(r.did)}" class="${classeBotao(r.viewer?.following)}">${textoBotao(r.viewer?.following)}</button>`}</td>`;
     if (r.text) tr.querySelector('.snippet').append(r.text.slice(0, 180)); // texto como texto, não HTML
@@ -425,7 +469,8 @@ $('unfollowTodos').onclick = async () => {
 const showLogin = () => {
   $('login').hidden = false;
   $('conta').hidden = Object.keys(contas).length === 0;
-  $('search').hidden = $('filtros').hidden = $('t').hidden = $('unfollowTodos').hidden = true;
+  $('search').hidden = $('filtrosBox').hidden = $('ajudaModo').hidden =
+    $('t').hidden = $('unfollowTodos').hidden = true;
 };
 // números da própria conta, para conferir a lista contra o que o perfil diz
 async function contadoresDaConta() {
@@ -439,10 +484,11 @@ async function contadoresDaConta() {
 
 const showSearch = () => {
   $('login').hidden = true;
-  $('conta').hidden = $('search').hidden = $('filtros').hidden = false;
+  $('conta').hidden = $('search').hidden = $('filtrosBox').hidden = false;
   $('contaSel').replaceChildren(...Object.keys(contas).map(h =>
     Object.assign(document.createElement('option'), { value: h, textContent: '@' + h })));
   $('contaSel').value = session.handle;
+  $('modo').onchange();   // ajuda, placeholder e ordens já coerentes na primeira tela
   contadoresDaConta();
   $('q').focus();
 };
@@ -482,30 +528,68 @@ $('logout').onclick = () => {
   if (session) { localStorage.setItem('ativa', session.handle); showSearch(); }
   else showLogin();
 };
-$('sort').onchange = $('filtros').oninput = () => rows.length && render();
+$('sort').onchange = () => rows.length && render();
+// o resumo acompanha os campos mesmo antes da primeira busca, quando render() nem roda
+$('filtros').oninput = () => { resumirFiltros(); rows.length && render(); };
+
+const AJUDA = {
+  posts: 'Procura o termo nos posts e lista quem publicou. Ex.: "vaga de emprego".',
+  seguidores: 'Lista quem segue o perfil informado. Ex.: alguem.bsky.social.',
+  bio: 'Lista perfis que têm o termo na descrição. Ex.: fotógrafo.',
+  naoSeguem: 'Lista quem você segue e não te segue de volta. Não precisa digitar nada.',
+};
+const PLACEHOLDER = {
+  posts: 'palavra ou frase',
+  seguidores: '@ do perfil (ex: alguem.bsky.social)',
+  bio: 'termo na bio (ex: fotógrafo)',
+  naoSeguem: 'não precisa preencher',
+};
+// cada modo só carrega algumas datas: ordenar pelas outras daria uma ordem sem sentido
+const ORDENS = { posts: ['last', 'match'], seguidores: ['last'], bio: ['last'], naoSeguem: ['seguido'] };
 
 $('modo').onchange = () => {
   const modo = $('modo').value;
-  $('q').placeholder = { posts: 'palavra ou frase', seguidores: 'handle do perfil (ex: alguem.bsky.social)',
-                         naoSeguem: 'não precisa preencher', bio: 'termo na bio (ex: fotógrafo)' }[modo];
+  $('q').placeholder = PLACEHOLDER[modo];
   $('q').disabled = modo === 'naoSeguem';   // disabled também dispensa o required
+  $('ajudaModo').textContent = AJUDA[modo];
+  $('ajudaModo').hidden = false;
+
   // sem último post carregado, esse filtro só esvaziaria a lista
   $('desdeUltimo').disabled = modo === 'naoSeguem';
   if ($('desdeUltimo').disabled) $('desdeUltimo').value = '';
-  // cada modo só tem as datas que ele carrega: ordenar pelas outras daria ordem aleatória
-  if (modo === 'naoSeguem') {
-    if (!$('sort').value.startsWith('seguido')) $('sort').value = 'seguido-desc';
-  } else {
-    if ($('sort').value.startsWith('seguido')) $('sort').value = 'last-desc';
-    if (modo !== 'posts' && $('sort').value.startsWith('match')) $('sort').value = 'last-desc';
-  }
+
+  // esconder as ordens inválidas é mais honesto do que trocar a escolha por baixo
+  const validas = ORDENS[modo];
+  for (const opt of $('sort').options) opt.hidden = !validas.includes(opt.value.split('-')[0]);
+  if (!validas.includes($('sort').value.split('-')[0])) $('sort').value = validas[0] + '-desc';
+
+  resumirFiltros();
 };
+
+const CAMPOS_FILTRO = ['segMin', 'segMax', 'sguMin', 'sguMax', 'maxPerfis', 'difPct', 'desdeUltimo'];
+const resumirFiltros = () => {
+  const n = CAMPOS_FILTRO.filter(id => $(id).value !== '').length;   // desligar já limpa o campo
+  $('filtrosAtivos').textContent = n ? `(${n} ativo${n > 1 ? 's' : ''})` : '(nenhum)';
+};
+
+// a mensagem da API é para quem escreveu o código; a da tela é para quem está usando
+const ERROS = [
+  [/Actor not found|Profile not found|could not resolve/i, 'Perfil não encontrado. Confira o @ digitado.'],
+  [/Invalid AT identifier/i, 'Esse @ não parece válido. Use algo como fulano.bsky.social.'],
+  [/Invalid identifier or password/i, 'Handle ou app password incorretos.'],
+  [/RateLimitExceeded|Rate ?Limit|429/i, 'Muitas buscas em pouco tempo. Espere alguns minutos.'],
+  [/ExpiredToken|Token has expired/i, 'Sua sessão expirou. Entre novamente.'],
+];
+const mensagemErro = err =>
+  ERROS.find(([re]) => re.test(err.message))?.[1] ?? 'Não consegui completar a busca.';
 
 $('search').onsubmit = async e => {
   e.preventDefault();
   $('t').hidden = $('unfollowTodos').hidden = true;
   const modo = $('modo').value;
   const termo = $('q').value.trim();
+  $('btnBuscar').disabled = true;             // dois cliques fariam duas buscas concorrentes
+  $('btnBuscar').textContent = 'Buscando…';
   try {
     $('status').textContent = { posts: 'Buscando posts…', seguidores: 'Buscando seguidores…',
                                 naoSeguem: 'Lendo quem você segue…', bio: 'Procurando nas bios…' }[modo];
@@ -539,8 +623,13 @@ $('search').onsubmit = async e => {
     if (modo === 'posts' && pareceHandle(termo))
       $('status').textContent += ' Isso parece um handle — para listar os seguidores dele, troque para "seguidores de".';
   } catch (err) {
-    $('status').textContent = 'Erro: ' + err.message;
+    console.error(err);                        // o detalhe técnico continua disponível
+    $('status').textContent = mensagemErro(err);
+    $('status').title = err.message;
     if (String(err.message).includes('401')) showLogin();
+  } finally {
+    $('btnBuscar').disabled = false;
+    $('btnBuscar').textContent = 'Buscar';
   }
 };
 
