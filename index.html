@@ -21,6 +21,12 @@
   #unfollowTodos { color: #a11; background: #fff; border: 1px solid #a11; }
   .aviso { flex: 1 1 100%; background: #fffbe6; border: 1px solid #e8d98a;
            border-radius: 6px; padding: .75rem 1rem; margin: 0 0 .5rem; max-width: 46rem; }
+  #scriptBox { margin: 1rem 0; }
+  #scriptBox summary { cursor: pointer; user-select: none; }
+  #scriptBox .ajuda { color: #555; max-width: 46rem; }
+  #scriptBox pre { background: #f6f6f6; border: 1px solid #ddd; border-radius: 6px;
+                   padding: .75rem 1rem; overflow-x: auto; margin: .5rem 0 0; }
+  #scriptBox code { font: 13px/1.5 ui-monospace, Consolas, monospace; }
   .rolagem { overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; }
   th, td { text-align: left; padding: .5rem; border-bottom: 1px solid #ddd; vertical-align: top; }
@@ -103,6 +109,40 @@
 <p id="status"></p>
 
 <p><button type="button" id="unfollowTodos" hidden></button></p>
+
+<details id="scriptBox" hidden>
+  <summary>Script para seguir todos os listados</summary>
+  <p class="ajuda">
+    Com a lista já na tela, abra o console do navegador (F12 → Console), cole e execute.
+    Ele clica em cada botão <strong>Seguir</strong> com uma pausa aleatória de 10 a 30 segundos
+    entre um e outro — o intervalo existe para não esbarrar no limite de escrita da API.
+    Deixe a aba aberta enquanto roda.
+  </p>
+  <button type="button" id="copiarScript">📋 copiar</button>
+  <pre><code id="scriptTexto">async function clicarEmTodosSeguir() {
+  const botoes = document.querySelectorAll(
+    'button.seguir[data-did^="did:plc:"]'
+  );
+
+  for (const [indice, botao] of botoes.entries()) {
+    botao.click();
+
+    const tempoEspera = Math.floor(Math.random() * (30000 - 10000 + 1)) + 10000;
+
+    console.log(
+      `Botão ${indice + 1}/${botoes.length} clicado. Próximo em ${(tempoEspera / 1000).toFixed(1)} segundos.`
+    );
+
+    if (indice &lt; botoes.length - 1) {
+      await new Promise(resolve =&gt; setTimeout(resolve, tempoEspera));
+    }
+  }
+
+  console.log('Finalizado!');
+}
+
+clicarEmTodosSeguir();</code></pre>
+</details>
 
 <div class="rolagem">
   <table hidden id="t">
@@ -466,11 +506,25 @@ $('unfollowTodos').onclick = async () => {
   await contadoresDaConta();   // o "seguindo" da barra acabou de mudar
 };
 
+// a área de transferência exige contexto seguro; em file:// costuma falhar,
+// então o plano B é deixar o texto selecionado para o Ctrl+C
+$('copiarScript').onclick = async () => {
+  const botao = $('copiarScript');
+  try {
+    await navigator.clipboard.writeText($('scriptTexto').textContent);
+    botao.textContent = '✓ copiado';
+  } catch {
+    getSelection().selectAllChildren($('scriptTexto'));
+    botao.textContent = 'selecionado — use Ctrl+C';
+  }
+  setTimeout(() => botao.textContent = '📋 copiar', 2000);
+};
+
 const showLogin = () => {
   $('login').hidden = false;
   $('conta').hidden = Object.keys(contas).length === 0;
   $('search').hidden = $('filtrosBox').hidden = $('ajudaModo').hidden =
-    $('t').hidden = $('unfollowTodos').hidden = true;
+    $('t').hidden = $('unfollowTodos').hidden = $('scriptBox').hidden = true;
 };
 // números da própria conta, para conferir a lista contra o que o perfil diz
 async function contadoresDaConta() {
@@ -484,7 +538,7 @@ async function contadoresDaConta() {
 
 const showSearch = () => {
   $('login').hidden = true;
-  $('conta').hidden = $('search').hidden = $('filtrosBox').hidden = false;
+  $('conta').hidden = $('search').hidden = $('filtrosBox').hidden = $('scriptBox').hidden = false;
   $('contaSel').replaceChildren(...Object.keys(contas).map(h =>
     Object.assign(document.createElement('option'), { value: h, textContent: '@' + h })));
   $('contaSel').value = session.handle;

@@ -19,6 +19,11 @@ const PADRAO = {};
 for (const m of src.matchAll(/<select id="(\w+)"[^>]*>([\s\S]*?)<\/select>/g))
   PADRAO[m[1]] = m[2].match(/<option value="([^"]+)"/)?.[1] ?? '';
 
+// conteúdo fixo escrito no HTML (o script para copiar, por exemplo)
+const TEXTO = {};
+for (const m of src.matchAll(/<(pre|code|p|span)[^>]*id="(\w+)"[^>]*>([\s\S]*?)<\/\1>/g))
+  TEXTO[m[2]] = m[3].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+
 const OCULTOS = new Set();
 for (const [tag] of src.matchAll(/<[a-z]+\s[^>]*>/g)) {
   const id = tag.match(/id="(\w+)"/)?.[1];
@@ -49,7 +54,8 @@ async function boot({ storage = {}, BSKY = [], chamadas = [], cenario = {} } = {
   const corpo = fakeEl({ rows: [] });
   corpo.replaceChildren = (...trs) => { corpo.rows = trs; };   // guarda as linhas para inspeção
   const el = id => els[id] ??= fakeEl({
-    id, value: PADRAO[id] ?? '', hidden: OCULTOS.has(id), disabled: false, tBodies: [corpo],
+    id, value: PADRAO[id] ?? '', hidden: OCULTOS.has(id), disabled: false,
+    textContent: TEXTO[id] ?? '', tBodies: [corpo],
   });
   globalThis.document = { getElementById: el, createElement: () => fakeEl() };
   globalThis.localStorage = {
@@ -59,6 +65,12 @@ async function boot({ storage = {}, BSKY = [], chamadas = [], cenario = {} } = {
   };
   globalThis.BSKY = BSKY;
   globalThis.confirm = () => cenario.confirmar !== false;
+  const copiado = [];
+  // o navigator do Node só tem getter, então a substituição é por defineProperty
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { clipboard: { writeText: t => (copiado.push(t), Promise.resolve()) } },
+  });
   // o app loga o erro tecnico de proposito; aqui ele vira dado, nao ruido na saida
   const erros = [];
   globalThis.console = { ...console, error: e => erros.push(e) };
@@ -169,7 +181,7 @@ async function boot({ storage = {}, BSKY = [], chamadas = [], cenario = {} } = {
     return new Response('{}', { status: 404 });
   };
   await import('./boot.mjs?v=' + Math.random());
-  return { chamadas, storage, els, el };
+  return { chamadas, storage, els, el, copiado };
 }
 
 const CFG = [
@@ -736,6 +748,39 @@ const SALVAS = {
   assert.equal(e('btnBuscar').disabled, false, 'liberado ao terminar');
   assert.equal(e('btnBuscar').textContent, 'Buscar', 'com o texto de volta');
   console.log('ok 23 - ajuda por modo, resumo de filtros, ordens validas e botao travado');
+}
+
+// 24) script para copiar: precisa casar com os botões que a própria página gera
+{
+  const r = await boot({ storage: { bsky: JSON.stringify(SALVAS), ativa: 'um.bsky.social' } });
+  const e = r.el;
+  assert.equal(e('scriptBox').hidden, false, 'aparece junto com a busca');
+
+  await e('copiarScript').onclick();
+  const copiado = r.copiado[0];
+  assert.equal(r.copiado.length, 1, 'copiou uma vez');
+  assert.match(copiado, /clicarEmTodosSeguir\(\);\s*$/, 'copia o script inteiro, ate a chamada final');
+  assert.ok(!/&lt;|&gt;|&amp;/.test(copiado), 'sem escape de HTML sobrando no texto copiado');
+  assert.equal(e('copiarScript').textContent, '✓ copiado', 'confirma para quem clicou');
+
+  // o seletor do script tem que encontrar os botões reais da tabela
+  const seletor = copiado.match(/querySelectorAll\(\s*'([^']+)'/)?.[1]
+    ?? copiado.match(/querySelectorAll\(\s*\n?\s*'([^']+)'/)?.[1];
+  assert.ok(seletor, 'o script precisa ter um seletor');
+
+  e('sort').value = 'last-desc';
+  for (const k of ['segMin', 'segMax', 'sguMin', 'sguMax', 'maxPerfis', 'difPct', 'desdeUltimo']) e(k).value = '';
+  e('q').value = 'teste';
+  await e('search').onsubmit({ preventDefault() {} });
+  const naoSeguido = e('t').tBodies[0].rows
+    .map(tr => tr.innerHTML).find(h => h.includes('did:plc:a'));
+
+  const [, classe, prefixoDid] = seletor.match(/button\.(\w+)\[data-did\^="([^"]+)"\]/);
+  assert.match(naoSeguido, new RegExp(`class="${classe}"`),
+    `o botao de seguir precisa ter a classe "${classe}" que o script procura`);
+  assert.match(naoSeguido, new RegExp(`data-did="${prefixoDid}`),
+    'e o data-did no formato que o script espera');
+  console.log('ok 24 - script copiavel e compativel com os botoes da pagina');
 }
 
 rmSync(join(import.meta.dirname, 'boot.mjs'));
