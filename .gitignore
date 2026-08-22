@@ -6,3 +6,12 @@ boot.mjs
 
 # fora do repositorio publico, continua na pasta local
 script.txt
+
+# configuracoes locais de assistentes e permissoes da maquina
+.claude/
+
+# pacote limpo gerado por prepare-publish.mjs
+dist/
+
+# dependencias opcionais do teste em navegador
+node_modules/

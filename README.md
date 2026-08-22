@@ -1,6 +1,7 @@
 # Busca de perfis no Bluesky
 
-Página estática, sem servidor e sem build. Um arquivo: `index.html`.
+Página estática, sem servidor e sem build de produção. A aplicação fica no `index.html`;
+os outros arquivos são configuração local, testes e preparação segura da publicação.
 
 ## Modos de busca
 
@@ -22,18 +23,29 @@ cp config.example.js config.js
 ```
 
 e preencha com uma [app password](https://bsky.app/settings/app-passwords) — nunca a
-senha da conta. Sem `config.js`, a página mostra o formulário de login.
+senha da conta. Sem `config.js`, a página mostra o formulário de login. Os tokens da
+sessão ficam no `sessionStorage`: sobrevivem a recargas, mas são apagados ao fechar a aba.
 
 ## Publicar online
 
 `config.js` **não pode ir junto**: é texto puro e daria acesso à sua conta a quem
-baixasse o arquivo. Ele já está no `.gitignore`. Publicado sem ele, cada pessoa entra
-com a própria app password, guardada apenas no navegador de quem usa — não há backend.
+baixasse o arquivo. O `.gitignore` protege commits, mas não protege quando uma pasta é
+arrastada manualmente para um serviço de hospedagem.
 
-Qualquer host de arquivos estáticos serve. Sem git, o caminho mais curto é arrastar a
-pasta para o [Netlify Drop](https://app.netlify.com/drop). Com git, GitHub Pages ou
-Cloudflare Pages. Em todos, o HTTPS vem de graça — e é obrigatório, já que a página
-recebe senha.
+Gere sempre o pacote público limpo:
+
+```bash
+node prepare-publish.mjs
+```
+
+O comando recria `dist/` apenas com o `index.html` e um `config.js` público vazio.
+Confira a mensagem do comando e envie **somente o conteúdo de `dist/`**. Nunca arraste
+a pasta inteira do projeto.
+
+Qualquer host de arquivos estáticos serve. Sem git, arraste apenas `dist/` para o
+[Netlify Drop](https://app.netlify.com/drop). Com git, GitHub Pages ou Cloudflare Pages
+também servem, desde que a raiz publicada seja o pacote limpo. Em todos, use HTTPS,
+porque a página recebe a app password diretamente no navegador.
 
 ## Testes
 
@@ -43,3 +55,14 @@ node test-boot.mjs
 
 Roda o script real do `index.html` num DOM mínimo, com a rede simulada. Aceita um fuso
 como argumento (`node test-boot.mjs Asia/Tokyo`), porque o filtro de data depende disso.
+
+Há também um smoke test opcional em Chromium real:
+
+```bash
+npm install
+npx playwright install chromium
+npm run test:browser
+```
+
+As dependências são apenas de desenvolvimento; a pasta publicada continua contendo
+somente HTML e o `config.js` público vazio.

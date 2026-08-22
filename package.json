@@ -1,0 +1,13 @@
+{
+  "name": "busca-seguidores-bsky",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node test-boot.mjs",
+    "test:browser": "node test-browser.mjs",
+    "prepare:publish": "node prepare-publish.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.62.1"
+  }
+}

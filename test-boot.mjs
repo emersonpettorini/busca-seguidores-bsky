@@ -5,7 +5,7 @@
 // e tem que ser aqui: a variável TZ do shell não chega ao Node neste ambiente.
 if (process.argv[2]) process.env.TZ = process.argv[2];
 
-import { readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 
@@ -31,7 +31,7 @@ for (const [tag] of src.matchAll(/<[a-z]+\s[^>]*>/g)) {
 }
 
 // Elemento falso: guarda o que for atribuído, ignora o que for chamado.
-const fakeEl = (extra = {}) => new Proxy({ value: '', options: [], ...extra }, {
+const fakeEl = (extra = {}) => new Proxy({ value: '', options: [], dataset: {}, ...extra }, {
   get: (t, k) => k in t ? t[k]
     : k === 'then' ? undefined
     : typeof k === 'string' ? () => fakeEl() : undefined,
@@ -49,7 +49,7 @@ const handle = p => p.n + '.bsky.social';
 
 const els = {};
 
-async function boot({ storage = {}, BSKY = [], chamadas = [], cenario = {} } = {}) {
+async function boot({ storage = {}, local = {}, BSKY = [], chamadas = [], cenario = {} } = {}) {
   for (const k of Object.keys(els)) delete els[k];
   const corpo = fakeEl({ rows: [] });
   corpo.replaceChildren = (...trs) => { corpo.rows = trs; };   // guarda as linhas para inspeção
@@ -59,6 +59,11 @@ async function boot({ storage = {}, BSKY = [], chamadas = [], cenario = {} } = {
   });
   globalThis.document = { getElementById: el, createElement: () => fakeEl() };
   globalThis.localStorage = {
+    getItem: k => local[k] ?? null,
+    setItem: (k, v) => local[k] = String(v),
+    removeItem: k => delete local[k],
+  };
+  globalThis.sessionStorage = {
     getItem: k => storage[k] ?? null,
     setItem: (k, v) => storage[k] = String(v),
     removeItem: k => delete storage[k],
@@ -102,7 +107,7 @@ async function boot({ storage = {}, BSKY = [], chamadas = [], cenario = {} } = {
         author: { did: did(p), handle: handle(p), displayName: 'User ' + p.n },
         indexedAt: `2026-07-2${i}T10:00:00Z`,
         record: { text: 'post de ' + handle(p) },
-      })) });
+      })), ...(cenario.cursorPosts && { cursor: 'ainda-tem' }) });
     if (path === 'app.bsky.actor.getProfiles') {
       let pedidos = u.searchParams.getAll('actors');
       // simula a API omitindo um perfil do lote, só na primeira vez que ele é pedido
@@ -129,7 +134,8 @@ async function boot({ storage = {}, BSKY = [], chamadas = [], cenario = {} } = {
       const pagina = u.searchParams.get('cursor') ? PERFIS.slice(2) : PERFIS.slice(0, 2);
       return json({
         followers: pagina.map(p => ({ did: did(p), handle: handle(p), displayName: 'User ' + p.n })),
-        cursor: u.searchParams.get('cursor') ? undefined : 'pag2',
+        cursor: cenario.cursorSeguidores ? 'ainda-tem'
+          : u.searchParams.get('cursor') ? undefined : 'pag2',
       });
     }
     if (path === 'app.bsky.actor.searchActors') {
@@ -144,7 +150,7 @@ async function boot({ storage = {}, BSKY = [], chamadas = [], cenario = {} } = {
         { did: 'did:plc:z', handle: 'perigoso.bsky.social',
           displayName: '<img src=x onerror="alert(1)">',
           description: 'fotógrafo de casamento <script>alert(2)</script>' },
-      ] });
+      ], ...(cenario.cursorBio && { cursor: 'ainda-tem' }) });
     }
     if (path === 'app.bsky.actor.getProfile')
       return json({ did: u.searchParams.get('actor'), handle: 'um.bsky.social',
@@ -164,6 +170,8 @@ async function boot({ storage = {}, BSKY = [], chamadas = [], cenario = {} } = {
     }
     if (path === 'app.bsky.feed.getAuthorFeed') {
       const p = PERFIS.find(x => did(x) === u.searchParams.get('actor'));
+      if (p && cenario.falhaAtividade === did(p))
+        return new Response(JSON.stringify({ message: 'falha simulada' }), { status: 503 });
       const i = PERFIS.indexOf(p);
       // topo do feed é um repost: a data que vale é a do repost, não a do post
       if (p.repostouPorUltimo)
@@ -173,7 +181,11 @@ async function boot({ storage = {}, BSKY = [], chamadas = [], cenario = {} } = {
         }] });
       return json({ feed: [{ post: { indexedAt: p.ultimoPostEm ?? `2026-07-1${i}T08:00:00Z` } }] });
     }
-    if (path === 'com.atproto.repo.createRecord') return json({ uri: 'at://me/app.bsky.graph.follow/novo' });
+    if (path === 'com.atproto.repo.createRecord') {
+      if (cenario.followFalha === body.record.subject)
+        return new Response(JSON.stringify({ error: 'RateLimitExceeded', message: 'limite simulado' }), { status: 429 });
+      return json({ uri: 'at://me/app.bsky.graph.follow/novo' });
+    }
     if (path === 'com.atproto.repo.deleteRecord') {
       cenario.desfeitos = (cenario.desfeitos ?? 0) + 1;   // o servidor passa a contar um a menos
       return json({});
@@ -181,7 +193,7 @@ async function boot({ storage = {}, BSKY = [], chamadas = [], cenario = {} } = {
     return new Response('{}', { status: 404 });
   };
   await import('./boot.mjs?v=' + Math.random());
-  return { chamadas, storage, els, el, copiado };
+  return { chamadas, storage, local, els, el, copiado };
 }
 
 const CFG = [
@@ -250,7 +262,7 @@ const SALVAS = {
   e('q').value = 'teste';
   await e('search').onsubmit({ preventDefault() {} });
   assert.equal(e('status').textContent, '3 de 3 perfis.', 'sem filtro, lista todos');
-  assert.deepEqual(JSON.parse(r.storage.hist), ['teste'], 'termo entra no historico');
+  assert.deepEqual(JSON.parse(r.local.hist), ['teste'], 'termo entra no historico persistente');
 
   aplicar({ segMin: 500, segMax: 1000 });
   assert.equal(e('status').textContent, '1 de 3 perfis.', 'so o perfil de 750 seguidores passa');
@@ -780,7 +792,99 @@ const SALVAS = {
     `o botao de seguir precisa ter a classe "${classe}" que o script procura`);
   assert.match(naoSeguido, new RegExp(`data-did="${prefixoDid}`),
     'e o data-did no formato que o script espera');
-  console.log('ok 24 - script copiavel e compativel com os botoes da pagina');
+  assert.match(copiado, /dataset\.resultado/, 'espera o resultado real de cada clique');
+  assert.match(copiado, /feitos.*erros/s, 'contabiliza sucessos e falhas');
+  console.log('ok 24 - script copiavel espera e contabiliza o resultado real');
+}
+
+// 25) tokens antigos persistentes migram para a sessão da aba e são apagados
+{
+  const local = { bsky: JSON.stringify(SALVAS), ativa: 'dois.bsky.social' };
+  const r = await boot({ local });
+  assert.equal(r.storage.ativa, 'dois.bsky.social', 'mantem a conta ativa ao migrar');
+  assert.ok(r.storage.bsky, 'tokens passam para sessionStorage');
+  assert.equal(r.local.bsky, undefined, 'tokens saem do localStorage persistente');
+  assert.equal(r.local.ativa, undefined, 'a conta ativa persistente tambem sai');
+  console.log('ok 25 - tokens persistentes migram para a sessao temporaria da aba');
+}
+
+// 26) todos os modos paginados avisam quando ainda havia cursor no teto
+{
+  const casos = [
+    ['posts', { cursorPosts: true }, /limite de 300 posts/],
+    ['seguidores', { cursorSeguidores: true }, /limite de 500 seguidores/],
+    ['bio', { cursorBio: true }, /limite de 500 perfis candidatos/],
+  ];
+  for (const [modo, cenario, aviso] of casos) {
+    const r = await boot({ storage: { bsky: JSON.stringify(SALVAS), ativa: 'um.bsky.social' }, cenario });
+    const e = r.el;
+    e('sort').value = 'last-desc';
+    for (const k of ['segMin', 'segMax', 'sguMin', 'sguMax', 'maxPerfis', 'difPct', 'desdeUltimo']) e(k).value = '';
+    e('modo').value = modo;
+    e('modo').onchange();
+    e('q').value = modo === 'seguidores' ? 'alvo.bsky.social'
+      : modo === 'bio' ? 'fotografo de casamento' : 'teste';
+    await e('search').onsubmit({ preventDefault() {} });
+    assert.match(e('status').textContent, aviso, `${modo} nao pode truncar em silencio`);
+  }
+  console.log('ok 26 - posts, seguidores e bio avisam quando atingem o teto');
+}
+
+// 27) erro na atividade não se disfarça de perfil sem post
+{
+  const r = await boot({
+    storage: { bsky: JSON.stringify(SALVAS), ativa: 'um.bsky.social' },
+    cenario: { falhaAtividade: 'did:plc:a' },
+  });
+  const e = r.el;
+  e('sort').value = 'last-desc';
+  for (const k of ['segMin', 'segMax', 'sguMin', 'sguMax', 'maxPerfis', 'difPct', 'desdeUltimo']) e(k).value = '';
+  e('q').value = 'teste';
+  await e('search').onsubmit({ preventDefault() {} });
+  assert.match(e('status').textContent, /atividade de 1 perfil/, 'o resumo conta a falha');
+  const html = e('t').tBodies[0].rows.map(tr => tr.innerHTML).join('\n');
+  assert.match(html, /falha ao consultar/, 'a linha afetada fica marcada');
+  console.log('ok 27 - falha de atividade fica visivel no resumo e na tabela');
+}
+
+// 28) follow em massa usa a lista filtrada, espera a escrita e não renova token em 429
+{
+  const executar = async cenario => {
+    const r = await boot({ storage: { bsky: JSON.stringify(SALVAS), ativa: 'um.bsky.social' }, cenario });
+    const e = r.el;
+    e('sort').value = 'last-desc';
+    for (const k of ['segMin', 'segMax', 'sguMin', 'sguMax', 'maxPerfis', 'difPct', 'desdeUltimo']) e(k).value = '';
+    e('q').value = 'teste';
+    await e('search').onsubmit({ preventDefault() {} });
+    e('segMax').value = '200';
+    e('filtros').oninput(); // sobra apenas o perfil a, ainda não seguido
+    assert.match(e('followTodos').textContent, /^Seguir os 1 listados/);
+    await e('followTodos').onclick();
+    return { r, e };
+  };
+
+  const sucesso = await executar({});
+  assert.equal(sucesso.r.chamadas.filter(c => c === 'com.atproto.repo.createRecord').length, 1);
+  assert.match(sucesso.e('status').textContent, /1 seguidos/);
+  assert.equal(sucesso.e('followTodos').hidden, true, 'some quando todos os visiveis foram seguidos');
+
+  const falha = await executar({ followFalha: 'did:plc:a' });
+  assert.match(falha.e('status').textContent, /0 seguidos, 1 falharam/);
+  assert.equal(falha.r.chamadas.filter(c => c === 'com.atproto.server.refreshSession').length, 0,
+    'rate limit nao e erro de token e nao deve relogar');
+  console.log('ok 28 - follow em massa confirma sucesso e falha sem refresh indevido');
+}
+
+// 29) o pacote de publicação contém apenas configuração pública vazia
+{
+  const dist = join(import.meta.dirname, 'dist');
+  await import('./prepare-publish.mjs?v=' + Math.random());
+  assert.deepEqual(readdirSync(dist).sort(), ['config.js', 'index.html']);
+  const cfgPublica = readFileSync(join(dist, 'config.js'), 'utf8');
+  assert.match(cfgPublica, /window\.BSKY = \[\];/);
+  assert.ok(!/appPassword:\s*['"][^'"]+/.test(cfgPublica), 'nenhuma app password no pacote');
+  rmSync(dist, { recursive: true, force: true });
+  console.log('ok 29 - publicacao gera pacote limpo sem credenciais locais');
 }
 
 rmSync(join(import.meta.dirname, 'boot.mjs'));
