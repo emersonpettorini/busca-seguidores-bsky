@@ -101,6 +101,16 @@ async function boot({ storage = {}, local = {}, BSKY = [], chamadas = [], cenari
       cenario.tokenVencido = false;   // login novo => token válido de novo
       return json({ did: 'did:plc:' + body.identifier, handle: body.identifier, accessJwt: 'novo', refreshJwt: 'r' });
     }
+    if (path === 'app.bsky.feed.searchPostsV2') {
+      cenario.paramsRecentes = Object.fromEntries(u.searchParams);
+      cenario.idiomasRecentes = u.searchParams.getAll('languages');
+      return json({ posts: PERFIS.map((p, i) => ({
+        uri: `at://${did(p)}/app.bsky.feed.post/recente${i}`,
+        author: { did: did(p), handle: handle(p), displayName: 'User ' + p.n },
+        indexedAt: new Date(Date.now() - (i + 1) * 60000).toISOString(),
+        record: { text: 'post recente de ' + handle(p), langs: i === 1 ? ['pt-BR'] : i === 2 ? ['en'] : ['pt'] },
+      })), ...(cenario.cursorRecentes && { cursor: 'ainda-tem' }) });
+    }
     if (path === 'app.bsky.feed.searchPosts')
       return json({ posts: PERFIS.map((p, i) => ({
         uri: `at://${did(p)}/app.bsky.feed.post/p${i}`,
@@ -812,6 +822,7 @@ const SALVAS = {
 {
   const casos = [
     ['posts', { cursorPosts: true }, /limite de 300 posts/],
+    ['recentes', { cursorRecentes: true }, /limite de 300 posts recentes/],
     ['seguidores', { cursorSeguidores: true }, /limite de 500 seguidores/],
     ['bio', { cursorBio: true }, /limite de 500 perfis candidatos/],
   ];
@@ -822,12 +833,13 @@ const SALVAS = {
     for (const k of ['segMin', 'segMax', 'sguMin', 'sguMax', 'maxPerfis', 'difPct', 'desdeUltimo']) e(k).value = '';
     e('modo').value = modo;
     e('modo').onchange();
+    if (modo === 'recentes') e('minutos').value = '30';
     e('q').value = modo === 'seguidores' ? 'alvo.bsky.social'
       : modo === 'bio' ? 'fotografo de casamento' : 'teste';
     await e('search').onsubmit({ preventDefault() {} });
     assert.match(e('status').textContent, aviso, `${modo} nao pode truncar em silencio`);
   }
-  console.log('ok 26 - posts, seguidores e bio avisam quando atingem o teto');
+  console.log('ok 26 - buscas paginadas avisam quando atingem o teto');
 }
 
 // 27) erro na atividade não se disfarça de perfil sem post
@@ -875,7 +887,41 @@ const SALVAS = {
   console.log('ok 28 - follow em massa confirma sucesso e falha sem refresh indevido');
 }
 
-// 29) o pacote de publicação contém apenas configuração pública vazia
+// 29) posts em português nos últimos X minutos, sem termo e com os filtros existentes
+{
+  const cenario = {};
+  const r = await boot({ storage: { bsky: JSON.stringify(SALVAS), ativa: 'um.bsky.social' }, cenario });
+  const e = r.el;
+  e('sort').value = 'last-desc';
+  for (const k of ['segMin', 'segMax', 'sguMin', 'sguMax', 'maxPerfis', 'difPct', 'desdeUltimo']) e(k).value = '';
+  e('modo').value = 'recentes';
+  e('modo').onchange();
+  assert.equal(e('q').disabled, true, 'o modo nao exige palavra artificial');
+  assert.equal(e('janelaLabel').hidden, false, 'a janela em minutos aparece');
+  assert.equal(e('minutos').disabled, false, 'o campo de minutos fica ativo');
+  assert.match(e('ajudaModo').textContent, /português/i, 'a ajuda explica o idioma');
+
+  e('q').value = 'termo antigo que deve ser ignorado';
+  e('minutos').value = '15';
+  const antes = Date.now();
+  await e('search').onsubmit({ preventDefault() {} });
+  const depois = Date.now();
+  assert.equal(cenario.paramsRecentes.query, undefined, 'nao envia termo na busca sem texto');
+  assert.deepEqual(cenario.idiomasRecentes, ['pt'], 'filtra pelo idioma portugues');
+  assert.equal(cenario.paramsRecentes.sort, 'recent', 'pede os posts mais recentes primeiro');
+  const since = Date.parse(cenario.paramsRecentes.since);
+  assert.ok(since >= antes - 15 * 60000 && since <= depois - 15 * 60000,
+    'a janela parte de agora menos X minutos');
+  assert.equal(e('status').textContent, '2 de 2 perfis.', 'descarta resultado sem marcador pt');
+  assert.equal(r.local.hist, undefined, 'nao grava no historico o termo desativado');
+
+  e('segMax').value = '200';
+  e('filtros').oninput();
+  assert.equal(e('status').textContent, '1 de 2 perfis.', 'os filtros existentes continuam valendo');
+  console.log('ok 29 - busca posts recentes em portugues e preserva os filtros');
+}
+
+// 30) o pacote de publicação contém apenas configuração pública vazia
 {
   const dist = join(import.meta.dirname, 'dist');
   await import('./prepare-publish.mjs?v=' + Math.random());
@@ -884,7 +930,7 @@ const SALVAS = {
   assert.match(cfgPublica, /window\.BSKY = \[\];/);
   assert.ok(!/appPassword:\s*['"][^'"]+/.test(cfgPublica), 'nenhuma app password no pacote');
   rmSync(dist, { recursive: true, force: true });
-  console.log('ok 29 - publicacao gera pacote limpo sem credenciais locais');
+  console.log('ok 30 - publicacao gera pacote limpo sem credenciais locais');
 }
 
 rmSync(join(import.meta.dirname, 'boot.mjs'));

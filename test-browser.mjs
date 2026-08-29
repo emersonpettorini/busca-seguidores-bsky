@@ -40,6 +40,12 @@ try {
         author: { did: 'did:plc:a', handle: 'a.bsky.social', displayName: 'Perfil A' },
         record: { text: 'post de teste' },
       }] });
+    if (path === 'app.bsky.feed.searchPostsV2')
+      return json({ posts: [{
+        uri: 'at://did:plc:a/app.bsky.feed.post/2', indexedAt: new Date().toISOString(),
+        author: { did: 'did:plc:a', handle: 'a.bsky.social', displayName: 'Perfil A' },
+        record: { text: 'post recente em português', langs: ['pt'] },
+      }] });
     if (path === 'app.bsky.actor.getProfiles')
       return json({ profiles: [{ did: 'did:plc:a', handle: 'a.bsky.social', displayName: 'Perfil A',
         followersCount: 100, followsCount: 50, viewer: {} }] });

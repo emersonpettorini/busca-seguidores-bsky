@@ -6,12 +6,14 @@ os outros arquivos são configuração local, testes e preparação segura da pu
 ## Modos de busca
 
 - **quem postou** — perfis que publicaram algo com o termo
+- **posts recentes em português** — perfis que publicaram qualquer coisa marcada como português nos últimos X minutos
 - **seguidores de** — seguidores de um perfil
 - **bio contém** — perfis com o termo na bio
 - **sigo, mas não me seguem** — quem você segue e não retribui, com a data em que você seguiu
 
 Filtros comuns a todos: faixa de seguidores, faixa de seguindo, diferença percentual
-entre os dois, data inicial do último post e limite de perfis listados. Dá para seguir
+entre os dois, data inicial do último post e limite de perfis listados. O modo de posts
+recentes usa o idioma declarado no próprio post e aceita uma janela positiva em minutos. Dá para seguir
 e deixar de seguir na própria lista, individualmente ou em massa.
 
 ## Rodar localmente
