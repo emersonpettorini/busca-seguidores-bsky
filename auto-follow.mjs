@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const HOST = 'https://bsky.social/xrpc/';
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const HISTORY = resolve(ROOT, 'auto-follow-history.jsonl');
-const DEFAULTS = { windowMinutes: 60, ratioPct: 20, maxFollows: 10, maxPages: 3 };
+const DEFAULTS = { windowMinutes: 60, ratioPct: 10, maxFollows: 20, maxPages: 3 };
 const WAIT = { min: 10000, max: 30000 };
 
 const positive = (value, fallback) => {
@@ -164,7 +164,10 @@ export async function loadAccounts(configPath = resolve(ROOT, 'config.js')) {
 }
 
 async function main() {
-  const accounts = await loadAccounts();
+  const cloudAccount = process.env.BSKY_HANDLE && process.env.BSKY_APP_PASSWORD
+    ? { handle: process.env.BSKY_HANDLE, appPassword: process.env.BSKY_APP_PASSWORD }
+    : null;
+  const accounts = cloudAccount ? [cloudAccount] : await loadAccounts();
   const selectedHandle = process.env.AUTO_FOLLOW_HANDLE?.replace(/^@/, '').toLowerCase();
   const account = selectedHandle
     ? accounts.find(item => item.handle.replace(/^@/, '').toLowerCase() === selectedHandle)

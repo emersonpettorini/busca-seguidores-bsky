@@ -19,8 +19,8 @@ e deixar de seguir na própria lista, individualmente ou em massa.
 ## Follow automático periódico
 
 O `auto-follow.mjs` procura posts marcados como português nos últimos 60 minutos,
-mantém apenas perfis cujos seguidores estejam dentro de 20% da quantidade de contas
-que seguem e limita cada execução a 10 follows. A própria conta, perfis já seguidos e
+mantém apenas perfis cujos seguidores estejam dentro de 10% da quantidade de contas
+que seguem e limita cada execução a 20 follows. A própria conta, perfis já seguidos e
 perfis bloqueados ficam de fora. Entre cada follow há uma pausa aleatória de 10 a 30
 segundos para reduzir o risco de limite da API.
 
@@ -40,6 +40,14 @@ Cada execução é registrada localmente em `auto-follow-history.jsonl`, arquivo
 pelo Git. A primeira conta válida do `config.js` é usada. Para escolher outra ou ajustar
 os limites, defina `AUTO_FOLLOW_HANDLE`, `AUTO_FOLLOW_WINDOW_MINUTES`,
 `AUTO_FOLLOW_RATIO_PCT` ou `AUTO_FOLLOW_MAX_FOLLOWS` no ambiente.
+
+### Execução na nuvem
+
+O workflow `.github/workflows/auto-follow.yml` executa a automação no GitHub Actions
+no minuto 17 de cada hora e também pode ser iniciado manualmente. Ele lê o handle e a
+app password dos Secrets `BSKY_HANDLE` e `BSKY_APP_PASSWORD`; nenhuma credencial fica
+no repositório ou nos arquivos publicados pelo GitHub Pages. As execuções usam somente
+permissão de leitura do conteúdo e não podem se sobrepor.
 
 ## Rodar localmente
 

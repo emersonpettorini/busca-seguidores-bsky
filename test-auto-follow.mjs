@@ -6,7 +6,7 @@ assert.equal(dentroDaProporcao(120, 100, 20), true);
 assert.equal(dentroDaProporcao(79, 100, 20), false);
 assert.equal(dentroDaProporcao(121, 100, 20), false);
 assert.equal(dentroDaProporcao(undefined, 100, 20), false);
-console.log('ok 1 - proporcao de 20% inclui os limites e rejeita contagens ausentes');
+console.log('ok 1 - proporcao configurada inclui os limites e rejeita contagens ausentes');
 
 const profiles = {
   'did:plc:a': { did: 'did:plc:a', handle: 'a.bsky.social', followersCount: 90, followsCount: 100, viewer: {} },
@@ -50,6 +50,8 @@ const now = new Date('2026-08-30T13:00:00Z');
   const api = mock();
   const result = await runAutomation({ account, now, fetchFn: api.fetchFn, recordHistory: false });
   assert.equal(result.mode, 'dry-run');
+  assert.equal(result.ratioPct, 10);
+  assert.equal(result.maxFollows, 20);
   assert.deepEqual(result.candidates.map(item => item.handle), ['a.bsky.social']);
   assert.equal(result.followed.length, 0);
   assert.equal(api.calls.some(call => call.path === 'com.atproto.repo.createRecord'), false);
