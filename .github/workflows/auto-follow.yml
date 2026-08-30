@@ -16,7 +16,7 @@ concurrency:
 jobs:
   follow:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - name: Baixar o projeto
         uses: actions/checkout@v6
@@ -24,8 +24,25 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 24
+      - name: Restaurar histórico de unfollows
+        uses: actions/cache/restore@v5
+        with:
+          path: .auto-follow-state.json
+          key: auto-follow-state-${{ github.run_id }}
+          restore-keys: auto-follow-state-
+      - name: Remover quem não segue de volta
+        run: node auto-unfollow.mjs --execute
+        env:
+          BSKY_HANDLE: ${{ secrets.BSKY_HANDLE }}
+          BSKY_APP_PASSWORD: ${{ secrets.BSKY_APP_PASSWORD }}
       - name: Buscar e seguir perfis
         run: node auto-follow.mjs --execute
         env:
           BSKY_HANDLE: ${{ secrets.BSKY_HANDLE }}
           BSKY_APP_PASSWORD: ${{ secrets.BSKY_APP_PASSWORD }}
+      - name: Salvar histórico de unfollows
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: .auto-follow-state.json
+          key: auto-follow-state-${{ github.run_id }}

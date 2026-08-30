@@ -3,6 +3,8 @@ config.js
 
 # histórico local da automação, sem credenciais
 auto-follow-history.jsonl
+auto-unfollow-history.jsonl
+.auto-follow-state.json
 
 # gerado pelo test-boot.mjs
 boot.mjs

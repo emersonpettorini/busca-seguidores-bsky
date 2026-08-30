@@ -6,6 +6,7 @@ import vm from 'node:vm';
 const HOST = 'https://bsky.social/xrpc/';
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const HISTORY = resolve(ROOT, 'auto-follow-history.jsonl');
+const STATE = resolve(ROOT, '.auto-follow-state.json');
 const DEFAULTS = { windowMinutes: 60, ratioPct: 10, maxFollows: 20, maxPages: 3 };
 const WAIT = { min: 10000, max: 30000 };
 
@@ -100,6 +101,7 @@ export async function runAutomation({
   sleepFn = delay,
   random = Math.random,
   recordHistory = true,
+  excludedDids = new Set(),
 } = {}) {
   if (!account?.handle || !account?.appPassword)
     throw new Error('Conta sem handle ou app password no config.js.');
@@ -115,6 +117,7 @@ export async function runAutomation({
   const profiles = await hydrateProfiles(fetchFn, session.accessJwt, search.authors);
   const candidates = profiles
     .filter(profile => profile.did !== session.did)
+    .filter(profile => !excludedDids.has(profile.did))
     .filter(profile => !profile.viewer?.following && !profile.viewer?.blocking && !profile.viewer?.blockedBy)
     .filter(profile => dentroDaProporcao(profile.followersCount, profile.followsCount, ratioPct))
     .sort((a, b) => b.matchedAt.localeCompare(a.matchedAt))
@@ -163,6 +166,16 @@ export async function loadAccounts(configPath = resolve(ROOT, 'config.js')) {
   return [sandbox.window.BSKY ?? []].flat().filter(account => account?.handle && account?.appPassword);
 }
 
+export async function loadExcludedDids(statePath = STATE) {
+  try {
+    const state = JSON.parse(await readFile(statePath, 'utf8'));
+    return new Set(Object.keys(state.unfollowed ?? {}));
+  } catch (error) {
+    if (error.code === 'ENOENT') return new Set();
+    throw new Error(`Estado de unfollow inválido: ${error.message}`);
+  }
+}
+
 async function main() {
   const cloudAccount = process.env.BSKY_HANDLE && process.env.BSKY_APP_PASSWORD
     ? { handle: process.env.BSKY_HANDLE, appPassword: process.env.BSKY_APP_PASSWORD }
@@ -182,6 +195,7 @@ async function main() {
     windowMinutes: process.env.AUTO_FOLLOW_WINDOW_MINUTES,
     ratioPct: process.env.AUTO_FOLLOW_RATIO_PCT,
     maxFollows: process.env.AUTO_FOLLOW_MAX_FOLLOWS,
+    excludedDids: await loadExcludedDids(),
   });
   console.log(JSON.stringify(summary, null, 2));
   if (!process.argv.includes('--execute'))

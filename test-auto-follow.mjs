@@ -74,4 +74,14 @@ const now = new Date('2026-08-30T13:00:00Z');
   console.log('ok 3 - execucao respeita o limite e cria o follow correto');
 }
 
+{
+  const api = mock();
+  const result = await runAutomation({
+    account, now, fetchFn: api.fetchFn, recordHistory: false,
+    excludedDids: new Set(['did:plc:a']),
+  });
+  assert.equal(result.candidates.length, 0);
+  console.log('ok 4 - nao volta a seguir um perfil removido pela automacao');
+}
+
 console.log('\ntodos passaram');

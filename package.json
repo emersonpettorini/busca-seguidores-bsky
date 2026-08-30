@@ -5,8 +5,11 @@
   "scripts": {
     "test": "node test-boot.mjs",
     "test:auto-follow": "node test-auto-follow.mjs",
+    "test:auto-unfollow": "node test-auto-unfollow.mjs",
     "auto-follow:dry-run": "node auto-follow.mjs",
     "auto-follow": "node auto-follow.mjs --execute",
+    "auto-unfollow:dry-run": "node auto-unfollow.mjs",
+    "auto-unfollow": "node auto-unfollow.mjs --execute",
     "test:browser": "node test-browser.mjs",
     "prepare:publish": "node prepare-publish.mjs"
   },

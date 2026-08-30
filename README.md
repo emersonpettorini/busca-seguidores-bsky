@@ -49,6 +49,12 @@ app password dos Secrets `BSKY_HANDLE` e `BSKY_APP_PASSWORD`; nenhuma credencial
 no repositório ou nos arquivos publicados pelo GitHub Pages. As execuções usam somente
 permissão de leitura do conteúdo e não podem se sobrepor.
 
+Na mesma execução, `auto-unfollow.mjs` remove no máximo 20 perfis que não seguem a
+conta de volta. Só entram perfis seguidos há pelo menos 7 dias, sempre do follow mais
+antigo em direção ao mais recente. Um estado persistente no cache do Actions impede
+que o follow automático volte a adicionar quem acabou de ser removido. O estado contém
+somente DIDs, handles e datas — nunca tokens ou app passwords.
+
 ## Rodar localmente
 
 Abra o `index.html` no navegador. Para entrar automaticamente:
