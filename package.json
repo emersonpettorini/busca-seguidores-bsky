@@ -4,6 +4,9 @@
   "type": "module",
   "scripts": {
     "test": "node test-boot.mjs",
+    "test:auto-follow": "node test-auto-follow.mjs",
+    "auto-follow:dry-run": "node auto-follow.mjs",
+    "auto-follow": "node auto-follow.mjs --execute",
     "test:browser": "node test-browser.mjs",
     "prepare:publish": "node prepare-publish.mjs"
   },

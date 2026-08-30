@@ -1,6 +1,9 @@
 # NUNCA versionar nem publicar: contém app passwords em texto puro
 config.js
 
+# histórico local da automação, sem credenciais
+auto-follow-history.jsonl
+
 # gerado pelo test-boot.mjs
 boot.mjs
 

@@ -16,6 +16,31 @@ entre os dois, data inicial do último post e limite de perfis listados. O modo 
 recentes usa o idioma declarado no próprio post e aceita uma janela positiva em minutos. Dá para seguir
 e deixar de seguir na própria lista, individualmente ou em massa.
 
+## Follow automático periódico
+
+O `auto-follow.mjs` procura posts marcados como português nos últimos 60 minutos,
+mantém apenas perfis cujos seguidores estejam dentro de 20% da quantidade de contas
+que seguem e limita cada execução a 10 follows. A própria conta, perfis já seguidos e
+perfis bloqueados ficam de fora. Entre cada follow há uma pausa aleatória de 10 a 30
+segundos para reduzir o risco de limite da API.
+
+Primeiro rode em simulação, que não segue ninguém:
+
+```bash
+npm run auto-follow:dry-run
+```
+
+Para efetivar os follows:
+
+```bash
+npm run auto-follow
+```
+
+Cada execução é registrada localmente em `auto-follow-history.jsonl`, arquivo ignorado
+pelo Git. A primeira conta válida do `config.js` é usada. Para escolher outra ou ajustar
+os limites, defina `AUTO_FOLLOW_HANDLE`, `AUTO_FOLLOW_WINDOW_MINUTES`,
+`AUTO_FOLLOW_RATIO_PCT` ou `AUTO_FOLLOW_MAX_FOLLOWS` no ambiente.
+
 ## Rodar localmente
 
 Abra o `index.html` no navegador. Para entrar automaticamente:
