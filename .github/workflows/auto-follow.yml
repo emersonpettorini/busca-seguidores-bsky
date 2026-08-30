@@ -2,7 +2,7 @@ name: Follow automático no Bluesky
 
 on:
   schedule:
-    - cron: '17 * * * *'
+    - cron: '47 * * * *'
       timezone: America/Sao_Paulo
   workflow_dispatch:
 
