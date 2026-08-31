@@ -6,6 +6,8 @@ assert.equal(dentroDaProporcao(120, 100, 20), true);
 assert.equal(dentroDaProporcao(79, 100, 20), false);
 assert.equal(dentroDaProporcao(121, 100, 20), false);
 assert.equal(dentroDaProporcao(undefined, 100, 20), false);
+assert.equal(dentroDaProporcao(90, 100), true);
+assert.equal(dentroDaProporcao(89, 100), false);
 console.log('ok 1 - proporcao configurada inclui os limites e rejeita contagens ausentes');
 
 const profiles = {
@@ -52,6 +54,8 @@ const now = new Date('2026-08-30T13:00:00Z');
   assert.equal(result.mode, 'dry-run');
   assert.equal(result.ratioPct, 10);
   assert.equal(result.maxFollows, 30);
+  assert.equal(result.maxPages, 20);
+  assert.equal(result.pagesRead, 1);
   assert.deepEqual(result.candidates.map(item => item.handle), ['a.bsky.social']);
   assert.equal(result.followed.length, 0);
   assert.equal(api.calls.some(call => call.path === 'com.atproto.repo.createRecord'), false);
@@ -82,6 +86,76 @@ const now = new Date('2026-08-30T13:00:00Z');
   });
   assert.equal(result.candidates.length, 0);
   console.log('ok 4 - nao volta a seguir um perfil removido pela automacao');
+}
+
+const paginationMock = ({ endless = false } = {}) => {
+  const calls = [];
+  let page = 0;
+  const fetchFn = async (input, options = {}) => {
+    const url = new URL(input);
+    const path = url.pathname.split('/').pop();
+    calls.push({ path, url });
+    const ok = data => new Response(JSON.stringify(data), { status: 200 });
+    if (path === 'com.atproto.server.createSession')
+      return ok({ did: 'did:plc:me', handle: 'eu.bsky.social', accessJwt: 'token' });
+    if (path === 'app.bsky.feed.searchPostsV2') {
+      page++;
+      if (endless) return ok({
+        posts: [{
+          indexedAt: `2026-08-30T12:${String(60 - page).padStart(2, '0')}:00Z`,
+          author: { did: `did:plc:page-${page}` }, record: { langs: ['pt'] },
+        }],
+        cursor: `page-${page + 1}`,
+      });
+      if (page === 1) return ok({
+        posts: [{ indexedAt: '2026-08-30T12:50:00Z',
+          author: { did: 'did:plc:inside-a' }, record: { langs: ['pt'] } }],
+        cursor: 'page-2',
+      });
+      return ok({
+        posts: [
+          { indexedAt: '2026-08-30T12:00:00Z',
+            author: { did: 'did:plc:inside-b' }, record: { langs: ['pt-BR'] } },
+          { indexedAt: '2026-08-30T11:59:59Z',
+            author: { did: 'did:plc:outside' }, record: { langs: ['pt'] } },
+        ],
+        cursor: 'page-3',
+      });
+    }
+    if (path === 'app.bsky.actor.getProfiles') return ok({
+      profiles: url.searchParams.getAll('actors').map(did => ({
+        did, handle: did.split(':').pop() + '.bsky.social',
+        followersCount: 100, followsCount: 100, viewer: {},
+      })),
+    });
+    return new Response('{}', { status: 404 });
+  };
+  return { calls, fetchFn };
+};
+
+{
+  const api = paginationMock();
+  const result = await runAutomation({
+    account, now, fetchFn: api.fetchFn, maxPages: 10, recordHistory: false,
+  });
+  assert.equal(result.pagesRead, 2);
+  assert.equal(result.postsRead, 3);
+  assert.equal(result.truncated, false);
+  assert.deepEqual(result.candidates.map(item => item.handle),
+    ['inside-a.bsky.social', 'inside-b.bsky.social']);
+  assert.equal(api.calls.filter(call => call.path === 'app.bsky.feed.searchPostsV2').length, 2);
+  console.log('ok 5 - pagina ate o inicio da janela e descarta posts anteriores');
+}
+
+{
+  const api = paginationMock({ endless: true });
+  const result = await runAutomation({
+    account, now, fetchFn: api.fetchFn, maxPages: 2, recordHistory: false,
+  });
+  assert.equal(result.pagesRead, 2);
+  assert.equal(result.truncated, true);
+  assert.equal(api.calls.filter(call => call.path === 'app.bsky.feed.searchPostsV2').length, 2);
+  console.log('ok 6 - informa truncamento quando atinge o limite de seguranca');
 }
 
 console.log('\ntodos passaram');

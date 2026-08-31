@@ -9,6 +9,7 @@ const STATE = resolve(ROOT, '.auto-follow-state.json');
 const HISTORY = resolve(ROOT, 'auto-unfollow-history.jsonl');
 const DEFAULTS = { graceDays: 7, maxUnfollows: 50, maxPages: 300 };
 const WAIT = { min: 10000, max: 30000 };
+const VERIFY = { attempts: 3, wait: 1000 };
 
 const positive = (value, fallback) => {
   const parsed = Number(value);
@@ -40,6 +41,7 @@ const login = (fetchFn, account) => requestJson(fetchFn, 'com.atproto.server.cre
 
 async function followRecords(fetchFn, session, maxPages) {
   const records = new Map();
+  let recordsRead = 0;
   let cursor;
   let truncated = false;
   for (let page = 0; page < maxPages; page++) {
@@ -50,19 +52,32 @@ async function followRecords(fetchFn, session, maxPages) {
         ...(cursor && { cursor }),
       },
     });
+    recordsRead += data.records.length;
     for (const record of data.records) {
       if (!record.value?.subject || !record.value?.createdAt) continue;
       const previous = records.get(record.value.subject);
-      if (!previous || record.value.createdAt < previous.followedAt)
+      if (previous) {
+        previous.uris.push(record.uri);
+        if (record.value.createdAt < previous.followedAt)
+          previous.followedAt = record.value.createdAt;
+      } else {
         records.set(record.value.subject, {
-          did: record.value.subject, uri: record.uri, followedAt: record.value.createdAt,
+          did: record.value.subject,
+          uris: [record.uri],
+          followedAt: record.value.createdAt,
         });
+      }
     }
     cursor = data.cursor;
     if (!cursor || !data.records.length) break;
     truncated = page === maxPages - 1;
   }
-  return { records: [...records.values()], truncated };
+  return {
+    records: [...records.values()],
+    recordsRead,
+    duplicateRecords: Math.max(0, recordsRead - records.size),
+    truncated,
+  };
 }
 
 async function hydrateProfiles(fetchFn, token, records) {
@@ -75,7 +90,6 @@ async function hydrateProfiles(fetchFn, token, records) {
     profiles.push(...data.profiles.map(profile => ({
       ...profile,
       ...byDid.get(profile.did),
-      uri: profile.viewer?.following ?? byDid.get(profile.did).uri,
     })));
   }
   return profiles;
@@ -89,6 +103,19 @@ const unfollow = (fetchFn, session, uri) => requestJson(fetchFn, 'com.atproto.re
     rkey: uri.split('/').pop(),
   },
 });
+
+async function confirmUnfollow(fetchFn, token, profile, sleepFn) {
+  for (let attempt = 0; attempt < VERIFY.attempts; attempt++) {
+    const data = await requestJson(fetchFn, 'app.bsky.actor.getProfiles', {
+      token, params: { actors: [profile.did] },
+    });
+    const refreshed = data.profiles.find(item => item.did === profile.did);
+    if (!refreshed) throw new Error('perfil não retornado ao verificar o unfollow');
+    if (!refreshed.viewer?.following) return;
+    if (attempt < VERIFY.attempts - 1) await sleepFn(VERIFY.wait);
+  }
+  throw new Error('o perfil continua seguido após remover todos os registros conhecidos');
+}
 
 const delay = milliseconds => new Promise(resolvePromise => setTimeout(resolvePromise, milliseconds));
 
@@ -143,16 +170,42 @@ export async function runUnfollow({
   const state = await loadState(statePath);
   const unfollowed = [];
   const failures = [];
+  let recordsDeleted = 0;
+  let recordDeleteFailures = 0;
   if (execute) {
     for (const [index, profile] of candidates.entries()) {
+      let profileRecordsDeleted = 0;
+      const deleteErrors = [];
+      for (const uri of new Set(profile.uris)) {
+        try {
+          await unfollow(fetchFn, session, uri);
+          profileRecordsDeleted++;
+          recordsDeleted++;
+        } catch (error) {
+          recordDeleteFailures++;
+          deleteErrors.push(error.message);
+        }
+      }
       try {
-        await unfollow(fetchFn, session, profile.uri);
-        const item = { did: profile.did, handle: profile.handle, followedAt: profile.followedAt };
+        await confirmUnfollow(fetchFn, session.accessJwt, profile, sleepFn);
+        const item = {
+          did: profile.did,
+          handle: profile.handle,
+          followedAt: profile.followedAt,
+          recordsDeleted: profileRecordsDeleted,
+          recordDeleteFailures: deleteErrors.length,
+        };
         unfollowed.push(item);
         state.unfollowed[profile.did] = { handle: profile.handle, at: now.toISOString() };
         await saveState(statePath, state);
       } catch (error) {
-        failures.push({ did: profile.did, handle: profile.handle, error: error.message });
+        failures.push({
+          did: profile.did,
+          handle: profile.handle,
+          recordsDeleted: profileRecordsDeleted,
+          recordDeleteFailures: deleteErrors.length,
+          error: [...deleteErrors, error.message].join('; '),
+        });
       }
       if (index < candidates.length - 1) {
         const wait = Math.floor(random() * (WAIT.max - WAIT.min + 1)) + WAIT.min;
@@ -169,7 +222,12 @@ export async function runUnfollow({
     graceDays,
     maxUnfollows,
     followsRead: follows.records.length,
-    candidates: candidates.map(({ did, handle, followedAt }) => ({ did, handle, followedAt })),
+    followRecordsRead: follows.recordsRead,
+    duplicateFollowRecords: follows.duplicateRecords,
+    candidates: candidates.map(({ did, handle, followedAt, uris }) =>
+      ({ did, handle, followedAt, followRecords: new Set(uris).size })),
+    recordsDeleted,
+    recordDeleteFailures,
     unfollowed,
     failures,
     truncated: follows.truncated,
@@ -195,7 +253,13 @@ async function main() {
     graceDays: process.env.AUTO_UNFOLLOW_GRACE_DAYS,
     maxUnfollows: process.env.AUTO_UNFOLLOW_MAX,
   });
-  console.log(JSON.stringify(summary, null, 2));
+  const { account: _account, candidates, unfollowed, failures, ...metrics } = summary;
+  console.log(JSON.stringify({
+    ...metrics,
+    candidatesCount: candidates.length,
+    unfollowedCount: unfollowed.length,
+    failuresCount: failures.length,
+  }, null, 2));
   if (!process.argv.includes('--execute'))
     console.log('\nSimulação: nenhum perfil recebeu unfollow.');
 }

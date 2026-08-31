@@ -7,7 +7,7 @@ const HOST = 'https://bsky.social/xrpc/';
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const HISTORY = resolve(ROOT, 'auto-follow-history.jsonl');
 const STATE = resolve(ROOT, '.auto-follow-state.json');
-const DEFAULTS = { windowMinutes: 60, ratioPct: 10, maxFollows: 30, maxPages: 3 };
+const DEFAULTS = { windowMinutes: 60, ratioPct: 10, maxFollows: 30, maxPages: 20 };
 const WAIT = { min: 10000, max: 30000 };
 
 const positive = (value, fallback) => {
@@ -15,7 +15,7 @@ const positive = (value, fallback) => {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
-export const dentroDaProporcao = (followers, follows, ratioPct = 20) =>
+export const dentroDaProporcao = (followers, follows, ratioPct = DEFAULTS.ratioPct) =>
   Number.isFinite(followers) && Number.isFinite(follows) &&
   Math.abs(followers - follows) <= follows * ratioPct / 100;
 
@@ -46,24 +46,34 @@ async function recentAuthors(fetchFn, token, { since, maxPages }) {
   const authors = new Map();
   let cursor;
   let postsRead = 0;
-  let truncated = false;
+  let pagesRead = 0;
   for (let page = 0; page < maxPages; page++) {
     const data = await requestJson(fetchFn, 'app.bsky.feed.searchPostsV2', {
       token,
       params: { limit: 100, sort: 'recent', languages: ['pt'], since, ...(cursor && { cursor }) },
     });
-    postsRead += data.posts.length;
-    for (const post of data.posts) {
+    const posts = data.posts ?? [];
+    pagesRead++;
+    postsRead += posts.length;
+    let reachedWindowStart = false;
+    for (const post of posts) {
+      if (!post.indexedAt || post.indexedAt < since) {
+        reachedWindowStart = true;
+        continue;
+      }
+      if (post.indexedAt === since) reachedWindowStart = true;
       if (!post.record?.langs?.some(lang => /^pt(?:-|$)/i.test(lang))) continue;
       const previous = authors.get(post.author.did);
       if (!previous || post.indexedAt > previous.matchedAt)
         authors.set(post.author.did, { ...post.author, matchedAt: post.indexedAt });
     }
     cursor = data.cursor;
-    if (!cursor || !data.posts.length) break;
-    truncated = page === maxPages - 1;
+    if (!cursor || !posts.length || reachedWindowStart) {
+      cursor = undefined;
+      break;
+    }
   }
-  return { authors: [...authors.values()], postsRead, truncated };
+  return { authors: [...authors.values()], postsRead, pagesRead, truncated: Boolean(cursor) };
 }
 
 async function hydrateProfiles(fetchFn, token, authors) {
@@ -147,6 +157,8 @@ export async function runAutomation({
     windowMinutes,
     ratioPct,
     maxFollows,
+    maxPages,
+    pagesRead: search.pagesRead,
     postsRead: search.postsRead,
     uniqueAuthors: search.authors.length,
     candidates: candidates.map(({ did, handle, followersCount, followsCount, matchedAt }) =>
@@ -195,9 +207,16 @@ async function main() {
     windowMinutes: process.env.AUTO_FOLLOW_WINDOW_MINUTES,
     ratioPct: process.env.AUTO_FOLLOW_RATIO_PCT,
     maxFollows: process.env.AUTO_FOLLOW_MAX_FOLLOWS,
+    maxPages: process.env.AUTO_FOLLOW_MAX_PAGES,
     excludedDids: await loadExcludedDids(),
   });
-  console.log(JSON.stringify(summary, null, 2));
+  const { account: _account, candidates, followed, failures, ...metrics } = summary;
+  console.log(JSON.stringify({
+    ...metrics,
+    candidatesCount: candidates.length,
+    followedCount: followed.length,
+    failuresCount: failures.length,
+  }, null, 2));
   if (!process.argv.includes('--execute'))
     console.log('\nSimulação: nenhum perfil foi seguido. Use --execute somente quando quiser efetivar os follows.');
 }

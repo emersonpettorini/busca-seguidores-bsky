@@ -22,7 +22,8 @@ O `auto-follow.mjs` procura posts marcados como português nos últimos 60 minut
 mantém apenas perfis cujos seguidores estejam dentro de 10% da quantidade de contas
 que seguem e limita cada execução a 30 follows. A própria conta, perfis já seguidos e
 perfis bloqueados ficam de fora. Entre cada follow há uma pausa aleatória de 10 a 30
-segundos para reduzir o risco de limite da API.
+segundos para reduzir o risco de limite da API. A busca percorre as páginas até chegar
+ao início da janela de 60 minutos, com um teto de segurança de 20 páginas.
 
 Primeiro rode em simulação, que não segue ninguém:
 
@@ -39,7 +40,8 @@ npm run auto-follow
 Cada execução é registrada localmente em `auto-follow-history.jsonl`, arquivo ignorado
 pelo Git. A primeira conta válida do `config.js` é usada. Para escolher outra ou ajustar
 os limites, defina `AUTO_FOLLOW_HANDLE`, `AUTO_FOLLOW_WINDOW_MINUTES`,
-`AUTO_FOLLOW_RATIO_PCT` ou `AUTO_FOLLOW_MAX_FOLLOWS` no ambiente.
+`AUTO_FOLLOW_RATIO_PCT`, `AUTO_FOLLOW_MAX_FOLLOWS` ou `AUTO_FOLLOW_MAX_PAGES` no
+ambiente.
 
 ### Execução na nuvem
 
@@ -53,9 +55,13 @@ ou nos arquivos publicados pelo GitHub Pages, e as execuções não podem se sob
 
 Na mesma execução, `auto-unfollow.mjs` remove no máximo 50 perfis que não seguem a
 conta de volta. Só entram perfis seguidos há pelo menos 7 dias, sempre do follow mais
-antigo em direção ao mais recente. Um estado persistente no cache do Actions impede
-que o follow automático volte a adicionar quem acabou de ser removido. O estado contém
-somente DIDs, handles e datas — nunca tokens ou app passwords.
+antigo em direção ao mais recente. Quando há registros de follow duplicados para a
+mesma pessoa, todos são removidos na mesma passagem. O perfil só é contabilizado e
+gravado no histórico depois que a API confirma que ele deixou de ser seguido. Um estado
+persistente no cache do Actions impede que o follow automático volte a adicionar quem
+acabou de ser removido. O estado contém somente DIDs, handles e datas — nunca tokens ou
+app passwords. Os logs públicos do Actions mostram somente contagens agregadas; handles
+e DIDs processados não são publicados.
 
 ## Rodar localmente
 
