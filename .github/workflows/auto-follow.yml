@@ -1,8 +1,7 @@
 name: Follow automático no Bluesky
 
 on:
-  schedule:
-    - cron: '2 * * * *'
+  workflow_call:
   workflow_dispatch:
 
 permissions:

@@ -1,0 +1,13 @@
+name: Disparo horário do Bluesky
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  run-auto-follow:
+    uses: ./.github/workflows/auto-follow.yml
+    secrets: inherit

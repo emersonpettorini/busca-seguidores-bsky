@@ -44,7 +44,8 @@ os limites, defina `AUTO_FOLLOW_HANDLE`, `AUTO_FOLLOW_WINDOW_MINUTES`,
 ### Execução na nuvem
 
 O workflow `.github/workflows/auto-follow.yml` executa a automação no GitHub Actions
-no minuto 02 de cada hora e também pode ser iniciado manualmente. Ele lê o handle e a
+no minuto 17 de cada hora e também pode ser iniciado manualmente. Um workflow mínimo
+cuida do agendamento e chama a automação principal. Ela lê o handle e a
 app password dos Secrets `BSKY_HANDLE` e `BSKY_APP_PASSWORD`; nenhuma credencial fica
 no repositório ou nos arquivos publicados pelo GitHub Pages. As execuções usam somente
 permissão de leitura do conteúdo e não podem se sobrepor.
