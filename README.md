@@ -25,6 +25,12 @@ perfis bloqueados ficam de fora. Entre cada follow há uma pausa aleatória de 1
 segundos para reduzir o risco de limite da API. A busca percorre as páginas até chegar
 ao início da janela de 60 minutos, com um teto de segurança de 20 páginas.
 
+Antes de seguir, a automação verifica os rótulos `porn`, `sexual` e `nudity` no perfil
+e nos 50 posts recentes. Também rejeita bios e posts com divulgação adulta explícita,
+como `NSFW`, `🔞`, nudez e links de plataformas adultas. Se essa verificação falhar,
+o perfil não é seguido. O filtro reduz bastante o risco, mas depende dos rótulos e dos
+textos publicados e, portanto, não garante detectar conteúdo adulto ainda não rotulado.
+
 Primeiro rode em simulação, que não segue ninguém:
 
 ```bash

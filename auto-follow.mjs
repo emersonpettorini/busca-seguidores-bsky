@@ -9,6 +9,16 @@ const HISTORY = resolve(ROOT, 'auto-follow-history.jsonl');
 const STATE = resolve(ROOT, '.auto-follow-state.json');
 const DEFAULTS = { windowMinutes: 60, ratioPct: 10, maxFollows: 30, maxPages: 20 };
 const WAIT = { min: 10000, max: 30000 };
+const ADULT_LABELS = new Set(['porn', 'sexual', 'nudity']);
+const ADULT_TEXT = [
+  /(?:^|\W)nsfw(?:\W|$)/iu,
+  /🔞/u,
+  /(?:^|\W)18\+(?:\W|$)/u,
+  /(?:^|\W)(?:adult\s+content|conte[uú]do\s+adulto)(?:\W|$)/iu,
+  /(?:^|\W)(?:nudes?|nudez)(?:\W|$)/iu,
+  /(?:^|\W)porn(?:o|ô|ografia|ographic)?(?:\W|$)/iu,
+  /(?:onlyfans\.com|fansly\.com|privacy\.com\.br)/iu,
+];
 
 const positive = (value, fallback) => {
   const parsed = Number(value);
@@ -18,6 +28,40 @@ const positive = (value, fallback) => {
 export const dentroDaProporcao = (followers, follows, ratioPct = DEFAULTS.ratioPct) =>
   Number.isFinite(followers) && Number.isFinite(follows) &&
   Math.abs(followers - follows) <= follows * ratioPct / 100;
+
+const activeAdultLabels = value => (value?.labels ?? [])
+  .filter(label => !label.neg && ADULT_LABELS.has(label.val))
+  .map(label => label.val);
+
+const containsAdultText = values => values
+  .filter(value => typeof value === 'string')
+  .some(value => ADULT_TEXT.some(pattern => pattern.test(value)));
+
+const postTextValues = post => [
+  post?.record?.text,
+  post?.record?.embed?.external?.uri,
+  post?.record?.embed?.external?.title,
+  post?.record?.embed?.external?.description,
+  post?.embed?.external?.uri,
+  post?.embed?.external?.title,
+  post?.embed?.external?.description,
+];
+
+export const detectAdultContent = (profile, feed = []) => {
+  const labels = new Set(activeAdultLabels(profile));
+  let explicitText = containsAdultText([
+    profile?.handle,
+    profile?.displayName,
+    profile?.description,
+  ]);
+  for (const item of feed) {
+    const post = item?.post;
+    activeAdultLabels(post).forEach(label => labels.add(label));
+    activeAdultLabels(post?.author).forEach(label => labels.add(label));
+    if (containsAdultText(postTextValues(post))) explicitText = true;
+  }
+  return { adult: labels.size > 0 || explicitText, labels: [...labels], explicitText };
+};
 
 const requestJson = async (fetchFn, path, { params, body, token } = {}) => {
   const url = new URL(path, HOST);
@@ -88,6 +132,14 @@ async function hydrateProfiles(fetchFn, token, authors) {
   return profiles;
 }
 
+async function inspectAdultContent(fetchFn, token, profile) {
+  const data = await requestJson(fetchFn, 'app.bsky.feed.getAuthorFeed', {
+    token,
+    params: { actor: profile.did, limit: 50, filter: 'posts_no_replies' },
+  });
+  return detectAdultContent(profile, data.feed ?? []);
+}
+
 const follow = (fetchFn, session, did) => requestJson(fetchFn, 'com.atproto.repo.createRecord', {
   token: session.accessJwt,
   body: {
@@ -125,13 +177,37 @@ export async function runAutomation({
   const since = new Date(now.getTime() - windowMinutes * 60000).toISOString();
   const search = await recentAuthors(fetchFn, session.accessJwt, { since, maxPages });
   const profiles = await hydrateProfiles(fetchFn, session.accessJwt, search.authors);
-  const candidates = profiles
+  const eligibleProfiles = profiles
     .filter(profile => profile.did !== session.did)
     .filter(profile => !excludedDids.has(profile.did))
     .filter(profile => !profile.viewer?.following && !profile.viewer?.blocking && !profile.viewer?.blockedBy)
     .filter(profile => dentroDaProporcao(profile.followersCount, profile.followsCount, ratioPct))
-    .sort((a, b) => b.matchedAt.localeCompare(a.matchedAt))
-    .slice(0, maxFollows);
+    .sort((a, b) => b.matchedAt.localeCompare(a.matchedAt));
+
+  const candidates = [];
+  const adultProfilesSkipped = [];
+  const adultCheckFailures = [];
+  let profilesCheckedForAdultContent = 0;
+  for (const profile of eligibleProfiles) {
+    if (candidates.length >= maxFollows) break;
+    profilesCheckedForAdultContent++;
+    try {
+      const inspection = await inspectAdultContent(fetchFn, session.accessJwt, profile);
+      if (inspection.adult) {
+        adultProfilesSkipped.push({
+          did: profile.did,
+          handle: profile.handle,
+          labels: inspection.labels,
+          explicitText: inspection.explicitText,
+        });
+        continue;
+      }
+      candidates.push(profile);
+    } catch (error) {
+      // Falha fechada: sem conseguir verificar, o perfil não é seguido.
+      adultCheckFailures.push({ did: profile.did, handle: profile.handle, error: error.message });
+    }
+  }
 
   const followed = [];
   const failures = [];
@@ -161,6 +237,9 @@ export async function runAutomation({
     pagesRead: search.pagesRead,
     postsRead: search.postsRead,
     uniqueAuthors: search.authors.length,
+    profilesCheckedForAdultContent,
+    adultProfilesSkipped,
+    adultCheckFailures,
     candidates: candidates.map(({ did, handle, followersCount, followsCount, matchedAt }) =>
       ({ did, handle, followersCount, followsCount, matchedAt })),
     followed,
@@ -210,9 +289,19 @@ async function main() {
     maxPages: process.env.AUTO_FOLLOW_MAX_PAGES,
     excludedDids: await loadExcludedDids(),
   });
-  const { account: _account, candidates, followed, failures, ...metrics } = summary;
+  const {
+    account: _account,
+    candidates,
+    followed,
+    failures,
+    adultProfilesSkipped,
+    adultCheckFailures,
+    ...metrics
+  } = summary;
   console.log(JSON.stringify({
     ...metrics,
+    adultProfilesSkippedCount: adultProfilesSkipped.length,
+    adultCheckFailuresCount: adultCheckFailures.length,
     candidatesCount: candidates.length,
     followedCount: followed.length,
     failuresCount: failures.length,
