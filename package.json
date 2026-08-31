@@ -10,10 +10,19 @@
     "auto-follow": "node auto-follow.mjs --execute",
     "auto-unfollow:dry-run": "node auto-unfollow.mjs",
     "auto-unfollow": "node auto-unfollow.mjs --execute",
+    "cloudflare:deploy": "wrangler deploy",
+    "cloudflare:types": "wrangler types",
     "test:browser": "node test-browser.mjs",
+    "test:scheduler": "vitest run cloudflare-scheduler",
+    "typecheck:scheduler": "tsc -p cloudflare-scheduler/tsconfig.json",
     "prepare:publish": "node prepare-publish.mjs"
   },
   "devDependencies": {
-    "playwright": "^1.62.1"
+    "@cloudflare/workers-types": "^5.20260829.1",
+    "@types/node": "^26.4.0",
+    "playwright": "^1.62.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.127.1"
   }
 }

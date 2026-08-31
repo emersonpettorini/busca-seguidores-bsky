@@ -43,12 +43,13 @@ os limites, defina `AUTO_FOLLOW_HANDLE`, `AUTO_FOLLOW_WINDOW_MINUTES`,
 
 ### Execução na nuvem
 
-O workflow `.github/workflows/auto-follow.yml` executa a automação no GitHub Actions
-no minuto 17 de cada hora e também pode ser iniciado manualmente. Um workflow mínimo
-cuida do agendamento e chama a automação principal. Ela lê o handle e a
-app password dos Secrets `BSKY_HANDLE` e `BSKY_APP_PASSWORD`; nenhuma credencial fica
-no repositório ou nos arquivos publicados pelo GitHub Pages. As execuções usam somente
-permissão de leitura do conteúdo e não podem se sobrepor.
+O Cloudflare Worker `busca-seguidores-bsky-scheduler` dispara o workflow
+`.github/workflows/auto-follow.yml` no minuto 17 de cada hora. O workflow também pode
+ser iniciado manualmente. O Worker guarda no cofre do Cloudflare um token do GitHub
+restrito a este repositório e à permissão de Actions; a credencial expira em
+30/08/2027. O handle e a app password continuam exclusivamente nos Secrets
+`BSKY_HANDLE` e `BSKY_APP_PASSWORD` do GitHub. Nenhuma credencial fica no repositório
+ou nos arquivos publicados pelo GitHub Pages, e as execuções não podem se sobrepor.
 
 Na mesma execução, `auto-unfollow.mjs` remove no máximo 20 perfis que não seguem a
 conta de volta. Só entram perfis seguidos há pelo menos 7 dias, sempre do follow mais
@@ -97,6 +98,13 @@ node test-boot.mjs
 
 Roda o script real do `index.html` num DOM mínimo, com a rede simulada. Aceita um fuso
 como argumento (`node test-boot.mjs Asia/Tokyo`), porque o filtro de data depende disso.
+
+O agendador do Cloudflare tem testes e checagem de tipos próprios:
+
+```bash
+pnpm test:scheduler
+pnpm typecheck:scheduler
+```
 
 Há também um smoke test opcional em Chromium real:
 

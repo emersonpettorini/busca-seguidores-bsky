@@ -20,3 +20,7 @@ dist/
 
 # dependencias opcionais do teste em navegador
 node_modules/
+
+# estado e segredos locais do Cloudflare Wrangler
+.wrangler/
+.dev.vars
