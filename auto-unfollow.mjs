@@ -7,7 +7,7 @@ const HOST = 'https://bsky.social/xrpc/';
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 const STATE = resolve(ROOT, '.auto-follow-state.json');
 const HISTORY = resolve(ROOT, 'auto-unfollow-history.jsonl');
-const DEFAULTS = { graceDays: 7, maxUnfollows: 20, maxPages: 300 };
+const DEFAULTS = { graceDays: 7, maxUnfollows: 50, maxPages: 300 };
 const WAIT = { min: 10000, max: 30000 };
 
 const positive = (value, fallback) => {

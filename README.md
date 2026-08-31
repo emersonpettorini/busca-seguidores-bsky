@@ -20,7 +20,7 @@ e deixar de seguir na própria lista, individualmente ou em massa.
 
 O `auto-follow.mjs` procura posts marcados como português nos últimos 60 minutos,
 mantém apenas perfis cujos seguidores estejam dentro de 10% da quantidade de contas
-que seguem e limita cada execução a 20 follows. A própria conta, perfis já seguidos e
+que seguem e limita cada execução a 30 follows. A própria conta, perfis já seguidos e
 perfis bloqueados ficam de fora. Entre cada follow há uma pausa aleatória de 10 a 30
 segundos para reduzir o risco de limite da API.
 
@@ -51,7 +51,7 @@ restrito a este repositório e à permissão de Actions; a credencial expira em
 `BSKY_HANDLE` e `BSKY_APP_PASSWORD` do GitHub. Nenhuma credencial fica no repositório
 ou nos arquivos publicados pelo GitHub Pages, e as execuções não podem se sobrepor.
 
-Na mesma execução, `auto-unfollow.mjs` remove no máximo 20 perfis que não seguem a
+Na mesma execução, `auto-unfollow.mjs` remove no máximo 50 perfis que não seguem a
 conta de volta. Só entram perfis seguidos há pelo menos 7 dias, sempre do follow mais
 antigo em direção ao mais recente. Um estado persistente no cache do Actions impede
 que o follow automático volte a adicionar quem acabou de ser removido. O estado contém

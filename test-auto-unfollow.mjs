@@ -54,7 +54,7 @@ try {
     });
     assert.equal(result.mode, 'dry-run');
     assert.equal(result.graceDays, 7);
-    assert.equal(result.maxUnfollows, 20);
+    assert.equal(result.maxUnfollows, 50);
     assert.deepEqual(result.candidates.map(item => item.handle),
       ['oldest.bsky.social', 'old.bsky.social']);
     assert.equal(api.calls.some(call => call.path === 'com.atproto.repo.deleteRecord'), false);
