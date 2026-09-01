@@ -1,0 +1,28 @@
+name: Exportar estado da automacao
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restaurar estado mais recente
+        uses: actions/cache/restore@v5
+        with:
+          path: .auto-follow-state.json
+          key: migration-export-${{ github.run_id }}
+          restore-keys: auto-follow-state-
+      - name: Confirmar estado
+        run: test -s .auto-follow-state.json
+      - name: Exportar temporariamente
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto-follow-state-migration
+          path: .auto-follow-state.json
+          include-hidden-files: true
+          retention-days: 1
+          if-no-files-found: error
